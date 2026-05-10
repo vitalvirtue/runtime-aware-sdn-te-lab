@@ -1,0 +1,62 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+*.egg-info/
+
+# Ansible
+*.retry
+.vault_pass
+vault-password*
+ansible.log
+
+# Secrets / keys
+*.pem
+*.key
+id_rsa
+id_rsa.pub
+id_ed25519
+id_ed25519.pub
+known_hosts
+*.kubeconfig
+.env
+.env.*
+
+# Logs / runtime output
+*.log
+logs/
+tmp/
+*.out
+
+# Go
+bin/
+dist/
+vendor/
+*.test
+coverage.out
+
+# eBPF / build artifacts
+*.o
+*.elf
+*.ll
+*.bc
+*_bpfel.go
+*_bpfeb.go
+*_bpfel.o
+*_bpfeb.o
+
+# P4 generated artifacts
+p4/artifacts/*.json
+p4/artifacts/*.p4info.txt
+out/
+
+# OS/editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
