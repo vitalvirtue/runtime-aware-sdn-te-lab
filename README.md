@@ -46,3 +46,18 @@ The current decision engine is rule/threshold based, not ML-based.
 ONOS is part of the controller-plane lab role, but the runtime control loop is currently implemented with lightweight custom services.
 P4/BMv2 is used for programmable data plane experiments; the main workload TE demo currently runs through the OVS overlay path.
 Native Go eBPF support is validated as a canary path, while the stable agent path is still being refined.
+
+
+## Documentation
+
+Main documentation files:
+
+- docs/current-state.md
+- docs/architecture.md
+- docs/component-inventory.md
+- docs/demo-guide.md
+- docs/playbook-classification.md
+- docs/stable-demo-wrapper.md
+- docs/milestones.md
+- docs/roadmap.md
+
