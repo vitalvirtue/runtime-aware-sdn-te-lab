@@ -1,0 +1,164 @@
+.
+├── .env
+├── .gitignore
+├── README.md
+├── agents
+│   ├── go-bpftrace-agent
+│   └── native-ebpf-canary
+├── ansible.cfg
+├── docs
+│   ├── architecture.md
+│   ├── component-inventory.md
+│   ├── current-state.md
+│   ├── demo-guide.md
+│   ├── milestones.md
+│   ├── playbook-classification.md
+│   ├── roadmap.md
+│   ├── snapshots
+│   │   ├── collector-health.txt
+│   │   ├── control-services.txt
+│   │   ├── edge-ovs-state.txt
+│   │   ├── inventory-graph.txt
+│   │   ├── lab-ping.txt
+│   │   ├── playbook-list.txt
+│   │   ├── repository-tree-before-cleanup.txt
+│   │   ├── snapshot-time-utc.txt
+│   │   └── workload-ebpf-agents.txt
+│   ├── stable-demo-wrapper.md
+│   ├── test-matrix.md
+│   └── validation-index.md
+├── files
+│   └── milestone06
+├── group_vars
+├── inventory
+│   ├── group_vars
+│   │   └── all.yml
+│   └── lab.ini
+├── onos-bmv2-port1-basic.json
+├── onos-bmv2-port2-basic.json
+├── onos-bmv2-s1-basic.json
+├── onos-bmv2-s1-netcfg.json
+├── p4
+│   ├── artifacts
+│   └── programs
+├── playbooks
+│   ├── 01-provision-vms.yml
+│   ├── 02-bootstrap.yml
+│   ├── 03-node-roles.yml
+│   ├── 06-deploy-policy-api-control.yml
+│   ├── 06-migrate-policy-api-to-ctrl.yml
+│   ├── 07-e2e-role-separated-test.yml
+│   ├── 08-deploy-workload-services.yml
+│   ├── 08-verify-workload-services.yml
+│   ├── 09-deploy-ovs-edge-baseline.yml
+│   ├── 09-verify-ovs-edge-baseline.yml
+│   ├── 10a-ovs-edge-policy-smoke.yml
+│   ├── 10b-deploy-ovs-edge-overlay.yml
+│   ├── 10b-verify-ovs-edge-overlay.yml
+│   ├── 11a-deploy-two-edge-te-baseline.yml
+│   ├── 11a-verify-two-edge-te-baseline.yml
+│   ├── 11b-te-path-counters.yml
+│   ├── 11c-clean-te-paths.yml
+│   ├── 11c-deploy-path-cost-emulation.yml
+│   ├── 11c-verify-path-cost-emulation.yml
+│   ├── 11d-deploy-te-metrics-collector.yml
+│   ├── 11d-patch-te-metrics-collector-ssh.yml
+│   ├── 11d-setup-te-metrics-ssh.yml
+│   ├── 11d-verify-te-metrics-collector.yml
+│   ├── 12a-deploy-te-decision-engine.yml
+│   ├── 12a-verify-te-decision-engine.yml
+│   ├── 12b-restore-path-costs.yml
+│   ├── 12b-simulate-critical-path-degradation.yml
+│   ├── 12b-verify-critical-path-decision.yml
+│   ├── 12c-apply-critical-to-path2.yml
+│   ├── 12c-restore-critical-to-path1.yml
+│   ├── 12c-verify-critical-shift-to-path2.yml
+│   ├── 12d-deploy-te-actuator.yml
+│   ├── 12d-verify-te-actuator.yml
+│   ├── 13a-deploy-ebpf-connect-smoke.yml
+│   ├── 13a-verify-ebpf-connect-smoke.yml
+│   ├── 13b-deploy-ebpf-tcpconnect-bcc.yml
+│   ├── 13b-deploy-ebpf-tcpconnect-bpftrace.yml
+│   ├── 13b-verify-ebpf-tcpconnect-bcc.yml
+│   ├── 13b-verify-ebpf-tcpconnect-bpftrace.yml
+│   ├── 13c-deploy-ebpf-json-telemetry.yml
+│   ├── 13c-patch-ebpf-json-telemetry-sockaddr.yml
+│   ├── 13c-verify-ebpf-json-telemetry.yml
+│   ├── 13d-deploy-ebpf-collector-integration.yml
+│   ├── 13d-verify-ebpf-collector-integration.yml
+│   ├── 13e-deploy-ebpf-te-correlation.yml
+│   ├── 13e-verify-ebpf-te-correlation.yml
+│   ├── 14a-deploy-ebpf-agent-daemon.yml
+│   ├── 14a-verify-ebpf-agent-daemon.yml
+│   ├── 14b-deploy-ebpf-agent-health-api.yml
+│   ├── 14b-verify-ebpf-agent-health-api.yml
+│   ├── 14c-deploy-ebpf-agent-config-state.yml
+│   ├── 14c-verify-ebpf-agent-config-state.yml
+│   ├── 14d-deploy-go-ebpf-agent-skeleton.yml
+│   ├── 14d-verify-go-ebpf-agent-skeleton.yml
+│   ├── 14e-deploy-go-ebpf-agent-stream-canary.yml
+│   ├── 14e-verify-go-ebpf-agent-stream-canary.yml
+│   ├── 14f-promote-go-ebpf-agent-default.yml
+│   ├── 14f-rollback-python-ebpf-agent.yml
+│   ├── 14f-verify-go-ebpf-agent-default.yml
+│   ├── 15a-deploy-native-go-ebpf-ringbuf-canary.yml
+│   ├── 15a-fix-go-toolchain-and-build.yml
+│   ├── 15a-fix-native-ebpf-target-arch.yml
+│   ├── 15a-verify-native-go-ebpf-ringbuf-canary.yml
+│   ├── archived
+│   ├── experimental
+│   ├── files
+│   │   └── milestone06
+│   │       └── sdn-policy-api-bundle.tgz
+│   └── stable
+├── policies
+├── roles
+│   ├── api
+│   │   └── tasks
+│   │       └── main.yml
+│   ├── bulk
+│   │   └── tasks
+│   │       └── main.yml
+│   ├── common
+│   │   └── tasks
+│   │       └── main.yml
+│   ├── ctrl_base
+│   │   └── tasks
+│   │       └── main.yml
+│   ├── db
+│   │   └── tasks
+│   │       └── main.yml
+│   ├── docker
+│   │   └── tasks
+│   │       └── main.yml
+│   ├── edge_ovs
+│   │   └── tasks
+│   │       └── main.yml
+│   ├── fabric_base
+│   │   └── tasks
+│   │       └── main.yml
+│   ├── fabric_container_tools
+│   │   └── tasks
+│   │       ├── main.yml
+│   │       └── main.yml.tmp
+│   ├── onos
+│   │   └── tasks
+│   │       └── main.yml
+│   ├── p4_toolchain
+│   │   └── tasks
+│   │       └── main.yml
+│   └── web
+│       └── tasks
+│           └── main.yml
+├── scripts
+│   ├── demo
+│   │   └── run-stable-demo.sh
+│   └── maintenance
+├── scripts-activate-onos-p4.sh
+├── services
+│   ├── te-actuator
+│   ├── te-decision-engine
+│   └── te-metrics-collector
+└── templates
+
+54 directories, 108 files
