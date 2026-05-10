@@ -1,0 +1,167 @@
+- name: Activate ONOS OpenFlow southbound
+  hosts: control
+  gather_facts: false
+
+  tasks:
+    - name: Activate ONOS OpenFlow apps
+      ansible.builtin.shell: |
+        set -euo pipefail
+
+        ONOS_REST="http://127.0.0.1:8181/onos/v1"
+        AUTH="onos:rocks"
+
+        echo "== ONOS health =="
+        curl -sf -u "$AUTH" "$ONOS_REST/applications" >/dev/null
+        echo "ONOS_REST_OK"
+
+        activate_app() {
+          app="$1"
+          echo "Activating $app"
+          curl -sf -u "$AUTH" -X POST "$ONOS_REST/applications/$app/active" >/dev/null
+        }
+
+        activate_app org.onosproject.openflow-base || true
+        activate_app org.onosproject.openflow-message || true
+        activate_app org.onosproject.openflow || true
+        activate_app org.onosproject.drivers || true
+
+        sleep 5
+
+        echo "== Relevant ONOS apps =="
+        curl -s -u "$AUTH" "$ONOS_REST/applications" | jq '
+          .applications[]
+          | select(.name | test("openflow|drivers|gui|ovsdb|fwd|p4runtime|bmv2"))
+          | {name,state}
+        '
+
+        echo "== OpenFlow port check =="
+        if nc -z 127.0.0.1 6653; then
+          echo "ONOS_OPENFLOW_6653_LISTENING"
+        else
+          echo "ONOS_OPENFLOW_6653_NOT_LISTENING"
+          ss -lntp | egrep "6653|6633|8181" || true
+          exit 1
+        fi
+      args:
+        executable: /bin/bash
+      register: onos_openflow_activation
+      changed_when: true
+
+    - name: Show ONOS OpenFlow activation output
+      ansible.builtin.debug:
+        var: onos_openflow_activation.stdout_lines
+
+
+- name: Connect OVS edge bridges to ONOS
+  hosts: edge
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Configure br-edge0 as ONOS-controlled OpenFlow bridge
+      ansible.builtin.shell: |
+        set -euo pipefail
+
+        HOST="$(hostname)"
+        BR="br-edge0"
+        ONOS_CTRL="tcp:10.60.10.11:6653"
+
+        if ! ovs-vsctl br-exists "$BR"; then
+          echo "ERROR bridge missing: $BR"
+          exit 1
+        fi
+
+        case "$HOST" in
+          lab-sdn-edge-ovs-a-01)
+            DPID="00000000000000a1"
+            ;;
+          lab-sdn-edge-ovs-b-01)
+            DPID="00000000000000b1"
+            ;;
+          *)
+            echo "ERROR unknown edge host: $HOST"
+            exit 1
+            ;;
+        esac
+
+        echo "CONFIGURE_ONOS_OVS_EDGE host=$HOST bridge=$BR dpid=$DPID controller=$ONOS_CTRL"
+
+        ovs-vsctl set bridge "$BR" protocols=OpenFlow13
+        ovs-vsctl set bridge "$BR" other_config:datapath-id="$DPID"
+        ovs-vsctl set-controller "$BR" "$ONOS_CTRL"
+
+        # Keep standalone for safety during this integration step.
+        # We do not want to break existing local OVS behavior if ONOS is restarted.
+        ovs-vsctl set-fail-mode "$BR" standalone
+
+        sleep 3
+
+        echo "== controller =="
+        ovs-vsctl get-controller "$BR"
+
+        echo "== fail mode =="
+        ovs-vsctl get-fail-mode "$BR"
+
+        echo "== protocols =="
+        ovs-vsctl get bridge "$BR" protocols
+
+        echo "== datapath id =="
+        ovs-vsctl get bridge "$BR" other_config:datapath-id
+
+        echo "== ovs-vsctl show =="
+        ovs-vsctl show
+
+        echo "ONOS_OVS_EDGE_CONFIG_DONE host=$HOST dpid=$DPID"
+      args:
+        executable: /bin/bash
+      register: ovs_onos_config
+      changed_when: true
+
+    - name: Show OVS ONOS config output
+      ansible.builtin.debug:
+        var: ovs_onos_config.stdout_lines
+
+
+- name: Verify ONOS sees OVS edge devices
+  hosts: control
+  gather_facts: false
+
+  tasks:
+    - name: Wait for OVS edge devices in ONOS
+      ansible.builtin.shell: |
+        set -euo pipefail
+
+        ONOS_REST="http://127.0.0.1:8181/onos/v1"
+        AUTH="onos:rocks"
+
+        for i in $(seq 1 20); do
+          echo "attempt=$i"
+
+          DEVICES="$(curl -s -u "$AUTH" "$ONOS_REST/devices")"
+          echo "$DEVICES" | jq '.devices[] | {id,available,type,driver,annotations}'
+
+          A_OK="$(echo "$DEVICES" | jq -r '.devices[] | select(.id=="of:00000000000000a1" and .available==true) | .id' | head -n1)"
+          B_OK="$(echo "$DEVICES" | jq -r '.devices[] | select(.id=="of:00000000000000b1" and .available==true) | .id' | head -n1)"
+
+          if [ "$A_OK" = "of:00000000000000a1" ] && [ "$B_OK" = "of:00000000000000b1" ]; then
+            echo "ONOS_OVS_EDGE_DEVICES_AVAILABLE"
+            exit 0
+          fi
+
+          sleep 3
+        done
+
+        echo "ERROR: ONOS did not discover both OVS edge devices"
+        exit 1
+      args:
+        executable: /bin/bash
+      register: onos_devices_verify
+      changed_when: false
+
+    - name: Show ONOS device verification
+      ansible.builtin.debug:
+        var: onos_devices_verify.stdout_lines
+
+    - name: Mark 17A passed
+      ansible.builtin.debug:
+        msg: "ONOS_OPENFLOW_OVS_EDGE_BASELINE_PASS"
