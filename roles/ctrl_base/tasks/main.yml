@@ -1,0 +1,17 @@
+- name: Install controller base packages
+  ansible.builtin.apt:
+    name:
+      - unzip
+      - tmux
+      - rsync
+    state: present
+
+- name: Create controller directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+  loop:
+    - /opt/sdn-lab
+    - /opt/sdn-lab/onos
+    - /opt/sdn-lab/telemetry

@@ -1,0 +1,203 @@
+- name: Deploy eBPF JSON telemetry runner on workload nodes
+  hosts: workloads
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Ensure eBPF JSON telemetry dependencies
+      ansible.builtin.apt:
+        name:
+          - bpftrace
+          - python3
+          - curl
+          - jq
+        state: present
+        update_cache: true
+
+    - name: Create eBPF telemetry directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      loop:
+        - /opt/sdn-lab/ebpf
+        - /opt/sdn-lab/ebpf/scripts
+        - /opt/sdn-lab/ebpf/logs
+        - /opt/sdn-lab/ebpf/events
+
+    - name: Ensure tcp_v4_connect bpftrace script exists
+      ansible.builtin.copy:
+        dest: /opt/sdn-lab/ebpf/scripts/tcp-v4-connect-ip-port.bt
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          BEGIN
+          {
+            printf("EBPF_TCP_V4_CONNECT_TRACE_START\n");
+          }
+
+          kprobe:tcp_v4_connect
+          /comm == "curl" || comm == "python3" || comm == "uvicorn" || comm == "nginx"/
+          {
+            $sk = (struct sock *)arg0;
+            $daddr = $sk->__sk_common.skc_daddr;
+            $dport = $sk->__sk_common.skc_dport;
+            $dport_host = (($dport >> 8) & 0xff) | (($dport & 0xff) << 8);
+
+            printf("TCP_CONNECT pid=%d comm=%s daddr=%s dport=%d\n",
+              pid,
+              comm,
+              ntop($daddr),
+              $dport_host
+            );
+          }
+
+          END
+          {
+            printf("EBPF_TCP_V4_CONNECT_TRACE_END\n");
+          }
+
+    - name: Create JSON telemetry runner
+      ansible.builtin.copy:
+        dest: /opt/sdn-lab/ebpf/run-json-telemetry-smoke.sh
+        owner: root
+        group: root
+        mode: "0755"
+        content: |
+          #!/usr/bin/env bash
+          set -euo pipefail
+
+          HOST="$(hostname)"
+          RAW_LOG="/opt/sdn-lab/ebpf/logs/tcp-v4-connect-json-raw.log"
+          EVENTS="/opt/sdn-lab/ebpf/events/tcp-connect-events.jsonl"
+
+          rm -f "$RAW_LOG" "$EVENTS"
+
+          case "$HOST" in
+            lab-sdn-app-web-01)
+              SEGMENT="web"
+              TRAFFIC_NAME="web->api"
+              TARGET_URL="http://172.31.210.12:18080/health"
+              ;;
+            lab-sdn-app-api-01)
+              SEGMENT="api"
+              TRAFFIC_NAME="api->db"
+              TARGET_URL="http://172.31.210.13:15432/health"
+              ;;
+            lab-sdn-data-db-01)
+              SEGMENT="db"
+              TRAFFIC_NAME="db->api"
+              TARGET_URL="http://172.31.210.12:18080/health"
+              ;;
+            lab-sdn-app-bulk-01)
+              SEGMENT="bulk"
+              TRAFFIC_NAME="bulk->api"
+              TARGET_URL="http://172.31.210.12:18080/health"
+              ;;
+            *)
+              SEGMENT="unknown"
+              TRAFFIC_NAME="unknown"
+              TARGET_URL="http://127.0.0.1/"
+              ;;
+          esac
+
+          echo "EBPF_JSON_TELEMETRY_HOST=$HOST"
+          echo "EBPF_JSON_TELEMETRY_SEGMENT=$SEGMENT"
+          echo "GENERATE_TRAFFIC $TRAFFIC_NAME"
+
+          timeout 12s bpftrace /opt/sdn-lab/ebpf/scripts/tcp-v4-connect-ip-port.bt > "$RAW_LOG" 2>&1 &
+          BPF_PID="$!"
+
+          sleep 4
+
+          curl -fsS "$TARGET_URL" >/dev/null || true
+
+          sleep 2
+          wait "$BPF_PID" || true
+
+          python3 - "$HOST" "$SEGMENT" "$RAW_LOG" "$EVENTS" <<'PY'
+          import json
+          import re
+          import sys
+          from datetime import datetime, timezone
+
+          host = sys.argv[1]
+          segment = sys.argv[2]
+          raw_log = sys.argv[3]
+          events_file = sys.argv[4]
+
+          def classify_flow(src_segment, dst_ip, dst_port):
+              dst_port = int(dst_port)
+
+              if src_segment == "web" and dst_ip == "172.31.210.12" and dst_port == 18080:
+                  return "web_to_api"
+
+              if src_segment == "api" and dst_ip == "172.31.210.13" and dst_port == 15432:
+                  return "critical_api_to_db"
+
+              if src_segment == "db" and dst_ip == "172.31.210.12" and dst_port == 18080:
+                  return "db_to_api"
+
+              if src_segment == "bulk" and dst_ip == "172.31.210.12" and dst_port == 18080:
+                  return "bulk_to_api"
+
+              if src_segment == "web" and dst_ip == "172.31.210.13":
+                  return "denied_web_to_db"
+
+              if src_segment == "bulk" and dst_ip == "172.31.210.13":
+                  return "denied_bulk_to_db"
+
+              return "unknown"
+
+          pattern = re.compile(
+              r"TCP_CONNECT pid=(?P<pid>\d+) comm=(?P<comm>\S+) daddr=(?P<daddr>[0-9.]+) dport=(?P<dport>\d+)"
+          )
+
+          events = []
+
+          with open(raw_log, "r", encoding="utf-8", errors="ignore") as f:
+              for line in f:
+                  m = pattern.search(line)
+                  if not m:
+                      continue
+
+                  dst_ip = m.group("daddr")
+                  dst_port = int(m.group("dport"))
+
+                  # Keep only our overlay lab traffic.
+                  if not dst_ip.startswith("172.31.210."):
+                      continue
+
+                  event = {
+                      "event_type": "tcp_connect",
+                      "timestamp": datetime.now(timezone.utc).isoformat(),
+                      "host": host,
+                      "segment": segment,
+                      "pid": int(m.group("pid")),
+                      "comm": m.group("comm"),
+                      "dst_ip": dst_ip,
+                      "dst_port": dst_port,
+                      "flow_class": classify_flow(segment, dst_ip, dst_port),
+                      "source": "bpftrace:kprobe:tcp_v4_connect"
+                  }
+
+                  events.append(event)
+
+          with open(events_file, "w", encoding="utf-8") as f:
+              for event in events:
+                  f.write(json.dumps(event, sort_keys=True) + "\n")
+
+          print(f"JSON_EVENTS_WRITTEN count={len(events)} file={events_file}")
+
+          for event in events:
+              print(json.dumps(event, sort_keys=True))
+          PY
+
+          echo "----- raw bpftrace output -----"
+          cat "$RAW_LOG"
+
+          echo "----- json events -----"
+          cat "$EVENTS"

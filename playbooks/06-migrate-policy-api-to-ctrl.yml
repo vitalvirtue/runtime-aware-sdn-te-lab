@@ -1,0 +1,224 @@
+- name: Prepare policy API bundle on fabric node
+  hosts: fabric
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Ensure temporary bundle directory is clean
+      ansible.builtin.file:
+        path: /tmp/sdn-policy-api-bundle
+        state: absent
+
+    - name: Create temporary bundle directories
+      ansible.builtin.file:
+        path: "/tmp/sdn-policy-api-bundle/{{ item }}"
+        state: directory
+        owner: automation
+        group: automation
+        mode: "0755"
+      loop:
+        - policy-controller
+        - policies
+        - p4-artifacts
+
+    - name: Copy controller files into bundle
+      ansible.builtin.shell: |
+        cp -a /opt/sdn-lab/fabric/controller/. /tmp/sdn-policy-api-bundle/policy-controller/
+      args:
+        executable: /bin/bash
+
+    - name: Copy policy files into bundle
+      ansible.builtin.shell: |
+        cp -a /opt/sdn-lab/fabric/policies/. /tmp/sdn-policy-api-bundle/policies/
+      args:
+        executable: /bin/bash
+
+    - name: Copy P4 artifacts into bundle
+      ansible.builtin.copy:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        remote_src: true
+        owner: automation
+        group: automation
+        mode: "0644"
+      loop:
+        - src: /opt/sdn-lab/fabric/out/segmentation_table_v2.json
+          dest: /tmp/sdn-policy-api-bundle/p4-artifacts/segmentation_table_v2.json
+        - src: /opt/sdn-lab/fabric/out/segmentation_table_v2.p4info.txt
+          dest: /tmp/sdn-policy-api-bundle/p4-artifacts/segmentation_table_v2.p4info.txt
+
+    - name: Create policy API bundle archive
+      ansible.builtin.archive:
+        path: /tmp/sdn-policy-api-bundle/*
+        dest: /tmp/sdn-policy-api-bundle.tgz
+        format: gz
+        owner: automation
+        group: automation
+        mode: "0644"
+
+    - name: Fetch bundle to ops VM
+      ansible.builtin.fetch:
+        src: /tmp/sdn-policy-api-bundle.tgz
+        dest: files/milestone06/sdn-policy-api-bundle.tgz
+        flat: true
+
+    - name: Stop old local policy API service on fabric if exists
+      ansible.builtin.systemd:
+        name: sdn-policy-api
+        state: stopped
+        enabled: false
+      failed_when: false
+
+- name: Deploy policy API to controller node
+  hosts: ctrl
+  become: true
+  gather_facts: true
+
+  vars:
+    controller_root: /opt/sdn-lab
+    policy_controller_dir: /opt/sdn-lab/policy-controller
+    policy_dir: /opt/sdn-lab/policies
+    p4_artifact_dir: /opt/sdn-lab/p4-artifacts
+    script_dir: /opt/sdn-lab/scripts
+    p4runtime_addr: "10.60.10.12:50052"
+
+  tasks:
+    - name: Install controller packages
+      ansible.builtin.apt:
+        name:
+          - python3
+          - python3-pip
+          - python3-venv
+          - curl
+          - jq
+          - netcat-openbsd
+        state: present
+        update_cache: true
+
+    - name: Create controller directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: automation
+        group: automation
+        mode: "0755"
+      loop:
+        - "{{ controller_root }}"
+        - "{{ policy_controller_dir }}"
+        - "{{ policy_dir }}"
+        - "{{ p4_artifact_dir }}"
+        - "{{ script_dir }}"
+
+    - name: Extract policy API bundle into /opt/sdn-lab
+      ansible.builtin.unarchive:
+        src: files/milestone06/sdn-policy-api-bundle.tgz
+        dest: "{{ controller_root }}"
+        owner: automation
+        group: automation
+        mode: "0755"
+
+    - name: Ensure controller tree ownership
+      ansible.builtin.file:
+        path: "{{ controller_root }}"
+        owner: automation
+        group: automation
+        recurse: true
+
+    - name: Recreate Python virtualenv
+      ansible.builtin.shell: |
+        rm -rf "{{ policy_controller_dir }}/.venv"
+        python3 -m venv "{{ policy_controller_dir }}/.venv"
+        "{{ policy_controller_dir }}/.venv/bin/pip" install --upgrade pip
+        "{{ policy_controller_dir }}/.venv/bin/pip" install fastapi uvicorn pyyaml p4runtime-shell
+      args:
+        executable: /bin/bash
+      become_user: automation
+
+    - name: Write policy API environment file
+      ansible.builtin.copy:
+        dest: /etc/sdn-policy-api.env
+        owner: root
+        group: automation
+        mode: "0640"
+        content: |
+          SDN_API_HOST=0.0.0.0
+          SDN_API_PORT=8088
+
+          SDN_P4INFO=/opt/sdn-lab/p4-artifacts/segmentation_table_v2.p4info.txt
+          SDN_BMV2_JSON=/opt/sdn-lab/p4-artifacts/segmentation_table_v2.json
+          SDN_DEFAULT_POLICY=/opt/sdn-lab/policies/segmentation_policy.yaml
+
+          SDN_P4RUNTIME_ADDR={{ p4runtime_addr }}
+          SDN_DEVICE_ID=1
+
+          SDN_TABLE_NAME=MyIngress.segment_policy
+          SDN_ACTION_NAME=MyIngress.allow_forward
+
+    - name: Write service start script
+      ansible.builtin.copy:
+        dest: "{{ script_dir }}/start-policy-api-service.sh"
+        owner: automation
+        group: automation
+        mode: "0755"
+        content: |
+          #!/usr/bin/env bash
+          set -euo pipefail
+
+          source /etc/sdn-policy-api.env
+
+          cd /opt/sdn-lab/policy-controller
+          source .venv/bin/activate
+
+          exec uvicorn policy_controller_api:app \
+            --host "${SDN_API_HOST}" \
+            --port "${SDN_API_PORT}" \
+            --workers 1
+
+    - name: Write systemd service
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/sdn-policy-api.service
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=SDN Lab Policy Controller API
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=simple
+          User=automation
+          Group=automation
+          WorkingDirectory=/opt/sdn-lab/policy-controller
+          EnvironmentFile=/etc/sdn-policy-api.env
+          ExecStart=/opt/sdn-lab/scripts/start-policy-api-service.sh
+          Restart=on-failure
+          RestartSec=3
+
+          NoNewPrivileges=true
+          PrivateTmp=true
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Enable and restart policy API service
+      ansible.builtin.systemd:
+        name: sdn-policy-api
+        enabled: true
+        state: restarted
+
+    - name: Check service health
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8088/health
+        method: GET
+        return_content: true
+      register: health_result
+
+    - name: Show service health
+      ansible.builtin.debug:
+        var: health_result.json

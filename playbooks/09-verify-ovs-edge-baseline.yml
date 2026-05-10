@@ -1,0 +1,68 @@
+- name: Verify OVS edge baseline
+  hosts: edge
+  become: true
+  gather_facts: false
+
+  vars:
+    edge_bridge_name: br-edge0
+
+  tasks:
+    - name: Check Open vSwitch service
+      ansible.builtin.command: systemctl is-active openvswitch-switch
+      register: ovs_service
+      changed_when: false
+
+    - name: Check OVS bridge exists
+      ansible.builtin.command: "ovs-vsctl br-exists {{ edge_bridge_name }}"
+      changed_when: false
+
+    - name: Read OVS bridge protocols
+      ansible.builtin.command: "ovs-vsctl get bridge {{ edge_bridge_name }} protocols"
+      register: ovs_protocols
+      changed_when: false
+
+    - name: Read OVS bridge fail mode
+      ansible.builtin.command: "ovs-vsctl get-fail-mode {{ edge_bridge_name }}"
+      register: ovs_fail_mode
+      changed_when: false
+
+    - name: Show OVS bridge configuration
+      ansible.builtin.shell: |
+        echo "service={{ ovs_service.stdout }}"
+        echo "protocols={{ ovs_protocols.stdout }}"
+        echo "fail_mode={{ ovs_fail_mode.stdout }}"
+        ovs-vsctl show
+      args:
+        executable: /bin/bash
+      register: ovs_config
+      changed_when: false
+
+    - name: Print OVS bridge configuration
+      ansible.builtin.debug:
+        var: ovs_config.stdout_lines
+
+    - name: Assert OVS baseline config
+      ansible.builtin.assert:
+        that:
+          - ovs_service.stdout == "active"
+          - "'OpenFlow13' in ovs_protocols.stdout"
+          - ovs_fail_mode.stdout == "standalone"
+        success_msg: "OVS_EDGE_BASELINE_CONFIG_PASS"
+        fail_msg: "OVS edge baseline config failed."
+
+    - name: Run local OVS namespace smoke test
+      ansible.builtin.command: /opt/sdn-lab/edge/ovs-local-smoke.sh
+      register: ovs_smoke
+      changed_when: true
+
+    - name: Print OVS smoke output
+      ansible.builtin.debug:
+        var: ovs_smoke.stdout_lines
+
+    - name: Assert local OVS smoke test passed
+      ansible.builtin.assert:
+        that:
+          - ovs_smoke.rc == 0
+          - "'OVS_EDGE_LOCAL_SMOKE_PASS' in ovs_smoke.stdout"
+        success_msg: "OVS_EDGE_LOCAL_SMOKE_PASS"
+        fail_msg: "OVS local namespace smoke test failed."

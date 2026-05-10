@@ -1,0 +1,51 @@
+- name: Apply TE decision - move critical api->db traffic to path-2
+  hosts: edge
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Apply critical traffic shift to path-2
+      ansible.builtin.shell: |
+        set -euo pipefail
+
+        BR="br-edge0"
+        host="$(hostname)"
+
+        if [ "$host" = "lab-sdn-edge-ovs-a-01" ]; then
+          API_PORT="$(ovs-vsctl get Interface vx-api-te ofport)"
+          P2_PORT="$(ovs-vsctl get Interface path2-to-b ofport)"
+
+          # Replace api -> db critical traffic from path-1 to path-2.
+          ovs-ofctl -O OpenFlow13 del-flows "$BR" "ip,nw_src=172.31.210.12,nw_dst=172.31.210.13"
+          ovs-ofctl -O OpenFlow13 add-flow "$BR" "priority=450,ip,nw_src=172.31.210.12,nw_dst=172.31.210.13,actions=output:${P2_PORT}"
+
+          # Return db -> api exits local API access port.
+          ovs-ofctl -O OpenFlow13 del-flows "$BR" "ip,nw_src=172.31.210.13,nw_dst=172.31.210.12"
+          ovs-ofctl -O OpenFlow13 add-flow "$BR" "priority=450,ip,nw_src=172.31.210.13,nw_dst=172.31.210.12,actions=output:${API_PORT}"
+
+          echo "EDGE_A_SHIFTED_CRITICAL_TO_PATH2 api_port=${API_PORT} path2=${P2_PORT}"
+        fi
+
+        if [ "$host" = "lab-sdn-edge-ovs-b-01" ]; then
+          DB_PORT="$(ovs-vsctl get Interface vx-db-te ofport)"
+          P2_PORT="$(ovs-vsctl get Interface path2-to-a ofport)"
+
+          # api -> db arrives via path-2, then exits DB access port.
+          ovs-ofctl -O OpenFlow13 del-flows "$BR" "ip,nw_src=172.31.210.12,nw_dst=172.31.210.13"
+          ovs-ofctl -O OpenFlow13 add-flow "$BR" "priority=450,ip,nw_src=172.31.210.12,nw_dst=172.31.210.13,actions=output:${DB_PORT}"
+
+          # db -> api return traffic now uses path-2.
+          ovs-ofctl -O OpenFlow13 del-flows "$BR" "ip,nw_src=172.31.210.13,nw_dst=172.31.210.12"
+          ovs-ofctl -O OpenFlow13 add-flow "$BR" "priority=450,ip,nw_src=172.31.210.13,nw_dst=172.31.210.12,actions=output:${P2_PORT}"
+
+          echo "EDGE_B_SHIFTED_CRITICAL_TO_PATH2 db_port=${DB_PORT} path2=${P2_PORT}"
+        fi
+
+        ovs-ofctl -O OpenFlow13 dump-flows "$BR" | egrep '172.31.210.12|172.31.210.13|priority=0'
+      args:
+        executable: /bin/bash
+      register: apply_result
+
+    - name: Show apply result
+      ansible.builtin.debug:
+        var: apply_result.stdout_lines

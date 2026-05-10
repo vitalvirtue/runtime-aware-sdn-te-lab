@@ -1,0 +1,27 @@
+- name: Verify eBPF tcpconnect BCC telemetry on workload nodes
+  hosts: workloads
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Run BCC tcpconnect smoke
+      ansible.builtin.shell: |
+        set -e
+        /opt/sdn-lab/ebpf/run-tcpconnect-bcc-smoke.sh
+      args:
+        executable: /bin/bash
+      register: tcpconnect_smoke
+      failed_when: >
+        'EBPF_TCPCONNECT_BCC_HOST=' not in tcpconnect_smoke.stdout or
+        (
+          '172.31.210.' not in tcpconnect_smoke.stdout and
+          'DADDR' not in tcpconnect_smoke.stdout
+        )
+
+    - name: Show tcpconnect output
+      ansible.builtin.debug:
+        var: tcpconnect_smoke.stdout_lines
+
+    - name: Mark BCC tcpconnect telemetry passed
+      ansible.builtin.debug:
+        msg: "EBPF_TCPCONNECT_BCC_SMOKE_PASS {{ inventory_hostname }}"

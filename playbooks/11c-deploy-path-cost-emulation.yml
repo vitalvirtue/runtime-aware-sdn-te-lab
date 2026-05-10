@@ -1,0 +1,204 @@
+- import_playbook: 11a-deploy-two-edge-te-baseline.yml
+
+
+- name: Replace inter-edge OVS tunnel ports with Linux VXLAN interfaces on edge-a
+  hosts: lab-sdn-edge-ovs-a-01
+  become: true
+  gather_facts: false
+
+  vars:
+    bridge: br-edge0
+    remote_edge_ip: "10.60.20.22"
+
+  tasks:
+    - name: Create controllable Linux VXLAN path interfaces on edge-a
+      ansible.builtin.shell: |
+        set -euo pipefail
+
+        BR="{{ bridge }}"
+        REMOTE="{{ remote_edge_ip }}"
+
+        LOCAL_UNDERLAY="$(ip -4 route get "$REMOTE" | awk '{for(i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}')"
+        DEV="$(ip -4 route get "$REMOTE" | awk '{for(i=1;i<=NF;i++) if ($i=="dev") {print $(i+1); exit}}')"
+
+        for p in path1-to-b path2-to-b; do
+          ovs-vsctl --if-exists del-port "$BR" "$p" || true
+          ip link del "$p" >/dev/null 2>&1 || true
+        done
+
+        sleep 1
+
+        ip link add path1-to-b type vxlan id 301 local "$LOCAL_UNDERLAY" remote "$REMOTE" dstport 4791 dev "$DEV" nolearning
+        ip link add path2-to-b type vxlan id 302 local "$LOCAL_UNDERLAY" remote "$REMOTE" dstport 4792 dev "$DEV" nolearning
+
+        ip link set path1-to-b mtu 1450
+        ip link set path2-to-b mtu 1450
+        ip link set path1-to-b up
+        ip link set path2-to-b up
+
+        ovs-vsctl --may-exist add-port "$BR" path1-to-b
+        ovs-vsctl --may-exist add-port "$BR" path2-to-b
+
+        # path-1 stays clean/low-cost.
+        tc qdisc del dev path1-to-b root >/dev/null 2>&1 || true
+
+        # path-2 is our higher-cost path.
+        tc qdisc replace dev path2-to-b root netem delay 120ms
+
+        echo "EDGE_A_LINUX_PATHS_READY local=${LOCAL_UNDERLAY} dev=${DEV}"
+        tc qdisc show dev path1-to-b
+        tc qdisc show dev path2-to-b
+      args:
+        executable: /bin/bash
+      register: edge_a_paths
+
+    - name: Show edge-a Linux path state
+      ansible.builtin.debug:
+        var: edge_a_paths.stdout_lines
+
+
+- name: Replace inter-edge OVS tunnel ports with Linux VXLAN interfaces on edge-b
+  hosts: lab-sdn-edge-ovs-b-01
+  become: true
+  gather_facts: false
+
+  vars:
+    bridge: br-edge0
+    remote_edge_ip: "10.60.20.21"
+
+  tasks:
+    - name: Create controllable Linux VXLAN path interfaces on edge-b
+      ansible.builtin.shell: |
+        set -euo pipefail
+
+        BR="{{ bridge }}"
+        REMOTE="{{ remote_edge_ip }}"
+
+        LOCAL_UNDERLAY="$(ip -4 route get "$REMOTE" | awk '{for(i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}')"
+        DEV="$(ip -4 route get "$REMOTE" | awk '{for(i=1;i<=NF;i++) if ($i=="dev") {print $(i+1); exit}}')"
+
+        for p in path1-to-a path2-to-a; do
+          ovs-vsctl --if-exists del-port "$BR" "$p" || true
+          ip link del "$p" >/dev/null 2>&1 || true
+        done
+
+        sleep 1
+
+        ip link add path1-to-a type vxlan id 301 local "$LOCAL_UNDERLAY" remote "$REMOTE" dstport 4791 dev "$DEV" nolearning
+        ip link add path2-to-a type vxlan id 302 local "$LOCAL_UNDERLAY" remote "$REMOTE" dstport 4792 dev "$DEV" nolearning
+
+        ip link set path1-to-a mtu 1450
+        ip link set path2-to-a mtu 1450
+        ip link set path1-to-a up
+        ip link set path2-to-a up
+
+        ovs-vsctl --may-exist add-port "$BR" path1-to-a
+        ovs-vsctl --may-exist add-port "$BR" path2-to-a
+
+        # path-1 stays clean/low-cost.
+        tc qdisc del dev path1-to-a root >/dev/null 2>&1 || true
+
+        # path-2 is our higher-cost path.
+        tc qdisc replace dev path2-to-a root netem delay 120ms
+
+        echo "EDGE_B_LINUX_PATHS_READY local=${LOCAL_UNDERLAY} dev=${DEV}"
+        tc qdisc show dev path1-to-a
+        tc qdisc show dev path2-to-a
+      args:
+        executable: /bin/bash
+      register: edge_b_paths
+
+    - name: Show edge-b Linux path state
+      ansible.builtin.debug:
+        var: edge_b_paths.stdout_lines
+
+
+- name: Reinstall TE flows after replacing path interfaces on edge-a
+  hosts: lab-sdn-edge-ovs-a-01
+  become: true
+  gather_facts: false
+
+  vars:
+    bridge: br-edge0
+
+  tasks:
+    - name: Reinstall edge-a TE flows
+      ansible.builtin.shell: |
+        set -euo pipefail
+
+        BR="{{ bridge }}"
+
+        WEB_PORT="$(ovs-vsctl get Interface vx-web-te ofport)"
+        API_PORT="$(ovs-vsctl get Interface vx-api-te ofport)"
+        P1_PORT="$(ovs-vsctl get Interface path1-to-b ofport)"
+        P2_PORT="$(ovs-vsctl get Interface path2-to-b ofport)"
+
+        ovs-ofctl -O OpenFlow13 del-flows "$BR"
+
+        ovs-ofctl -O OpenFlow13 add-flow "$BR" "priority=400,ip,nw_src=172.31.210.11,nw_dst=172.31.210.12,actions=output:${API_PORT}"
+        ovs-ofctl -O OpenFlow13 add-flow "$BR" "priority=400,ip,nw_src=172.31.210.12,nw_dst=172.31.210.11,actions=output:${WEB_PORT}"
+
+        # Critical traffic: path-1
+        ovs-ofctl -O OpenFlow13 add-flow "$BR" "priority=400,ip,nw_src=172.31.210.12,nw_dst=172.31.210.13,actions=output:${P1_PORT}"
+        ovs-ofctl -O OpenFlow13 add-flow "$BR" "priority=400,ip,nw_src=172.31.210.13,nw_dst=172.31.210.12,actions=output:${API_PORT}"
+
+        # Bulk/default traffic: path-2
+        ovs-ofctl -O OpenFlow13 add-flow "$BR" "priority=400,ip,nw_src=172.31.210.14,nw_dst=172.31.210.12,actions=output:${API_PORT}"
+        ovs-ofctl -O OpenFlow13 add-flow "$BR" "priority=400,ip,nw_src=172.31.210.12,nw_dst=172.31.210.14,actions=output:${P2_PORT}"
+
+        ovs-ofctl -O OpenFlow13 add-flow "$BR" "priority=500,ip,nw_src=172.31.210.11,nw_dst=172.31.210.13,actions=drop"
+        ovs-ofctl -O OpenFlow13 add-flow "$BR" "priority=0,actions=drop"
+
+        echo "EDGE_A_TE_COST_FLOWS_READY web=${WEB_PORT} api=${API_PORT} path1=${P1_PORT} path2=${P2_PORT}"
+        ovs-ofctl -O OpenFlow13 dump-flows "$BR"
+      args:
+        executable: /bin/bash
+      register: edge_a_flows
+
+    - name: Show edge-a cost-aware flows
+      ansible.builtin.debug:
+        var: edge_a_flows.stdout_lines
+
+
+- name: Reinstall TE flows after replacing path interfaces on edge-b
+  hosts: lab-sdn-edge-ovs-b-01
+  become: true
+  gather_facts: false
+
+  vars:
+    bridge: br-edge0
+
+  tasks:
+    - name: Reinstall edge-b TE flows
+      ansible.builtin.shell: |
+        set -euo pipefail
+
+        BR="{{ bridge }}"
+
+        DB_PORT="$(ovs-vsctl get Interface vx-db-te ofport)"
+        BULK_PORT="$(ovs-vsctl get Interface vx-bulk-te ofport)"
+        P1_PORT="$(ovs-vsctl get Interface path1-to-a ofport)"
+        P2_PORT="$(ovs-vsctl get Interface path2-to-a ofport)"
+
+        ovs-ofctl -O OpenFlow13 del-flows "$BR"
+
+        # Critical traffic: path-1
+        ovs-ofctl -O OpenFlow13 add-flow "$BR" "priority=400,ip,nw_src=172.31.210.12,nw_dst=172.31.210.13,actions=output:${DB_PORT}"
+        ovs-ofctl -O OpenFlow13 add-flow "$BR" "priority=400,ip,nw_src=172.31.210.13,nw_dst=172.31.210.12,actions=output:${P1_PORT}"
+
+        # Bulk/default traffic: path-2
+        ovs-ofctl -O OpenFlow13 add-flow "$BR" "priority=400,ip,nw_src=172.31.210.14,nw_dst=172.31.210.12,actions=output:${P2_PORT}"
+        ovs-ofctl -O OpenFlow13 add-flow "$BR" "priority=400,ip,nw_src=172.31.210.12,nw_dst=172.31.210.14,actions=output:${BULK_PORT}"
+
+        ovs-ofctl -O OpenFlow13 add-flow "$BR" "priority=500,ip,nw_src=172.31.210.14,nw_dst=172.31.210.13,actions=drop"
+        ovs-ofctl -O OpenFlow13 add-flow "$BR" "priority=0,actions=drop"
+
+        echo "EDGE_B_TE_COST_FLOWS_READY db=${DB_PORT} bulk=${BULK_PORT} path1=${P1_PORT} path2=${P2_PORT}"
+        ovs-ofctl -O OpenFlow13 dump-flows "$BR"
+      args:
+        executable: /bin/bash
+      register: edge_b_flows
+
+    - name: Show edge-b cost-aware flows
+      ansible.builtin.debug:
+        var: edge_b_flows.stdout_lines

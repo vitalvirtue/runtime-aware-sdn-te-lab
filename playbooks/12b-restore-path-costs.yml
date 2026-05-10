@@ -1,0 +1,47 @@
+- name: Restore normal path cost profile
+  hosts: edge
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Restore normal path costs
+      ansible.builtin.shell: |
+        set -euo pipefail
+
+        host="$(hostname)"
+
+        if [ "$host" = "lab-sdn-edge-ovs-a-01" ]; then
+          if ip link show path1-to-b >/dev/null 2>&1; then
+            tc qdisc del dev path1-to-b root >/dev/null 2>&1 || true
+          fi
+
+          if ip link show path2-to-b >/dev/null 2>&1; then
+            tc qdisc replace dev path2-to-b root netem delay 120ms
+          fi
+        fi
+
+        if [ "$host" = "lab-sdn-edge-ovs-b-01" ]; then
+          if ip link show path1-to-a >/dev/null 2>&1; then
+            tc qdisc del dev path1-to-a root >/dev/null 2>&1 || true
+          fi
+
+          if ip link show path2-to-a >/dev/null 2>&1; then
+            tc qdisc replace dev path2-to-a root netem delay 120ms
+          fi
+        fi
+
+        echo "PATH_COSTS_RESTORED host=$host"
+
+        for dev in path1-to-b path2-to-b path1-to-a path2-to-a; do
+          if ip link show "$dev" >/dev/null 2>&1; then
+            echo "dev=$dev"
+            tc qdisc show dev "$dev"
+          fi
+        done
+      args:
+        executable: /bin/bash
+      register: restore
+
+    - name: Show restored path state
+      ansible.builtin.debug:
+        var: restore.stdout_lines

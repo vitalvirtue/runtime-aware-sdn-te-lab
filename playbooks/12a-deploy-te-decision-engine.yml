@@ -1,0 +1,228 @@
+- name: Deploy TE decision engine on controller node
+  hosts: control
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Install TE decision engine dependencies
+      ansible.builtin.apt:
+        name:
+          - python3
+          - python3-venv
+          - python3-pip
+          - curl
+          - jq
+        state: present
+        update_cache: true
+
+    - name: Create TE decision engine directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: automation
+        group: automation
+        mode: "0755"
+      loop:
+        - /opt/sdn-lab/te-decision
+        - /opt/sdn-lab/te-decision/state
+
+    - name: Create TE decision engine app
+      ansible.builtin.copy:
+        dest: /opt/sdn-lab/te-decision/app.py
+        owner: automation
+        group: automation
+        mode: "0644"
+        content: |
+          import json
+          from datetime import datetime
+          from pathlib import Path
+          from typing import Dict, Any
+
+          import requests
+          from fastapi import FastAPI
+
+          app = FastAPI(title="SDN Lab TE Decision Engine")
+
+          COLLECTOR_URL = "http://127.0.0.1:8090"
+          STATE_FILE = Path("/opt/sdn-lab/te-decision/state/current_decision.json")
+
+          # Simple heuristic thresholds.
+          # Later these can be replaced by ML-assisted policy selection.
+          CRITICAL_LATENCY_TARGET_SECONDS = 0.050
+          PATH_DIFF_MARGIN_SECONDS = 0.100
+
+          def collect_metrics() -> Dict[str, Any]:
+              r = requests.post(f"{COLLECTOR_URL}/metrics/collect", timeout=60)
+              r.raise_for_status()
+              return r.json()["metrics"]
+
+          def flow_packets(metrics: Dict[str, Any], edge: str, flow_class: str) -> int:
+              flows = metrics.get("edges", {}).get(edge, {}).get("flows", [])
+              total = 0
+              for flow in flows:
+                  if flow.get("class") == flow_class:
+                      total += int(flow.get("packets", 0))
+              return total
+
+          def evaluate(metrics: Dict[str, Any]) -> Dict[str, Any]:
+              latency = metrics.get("latency", {})
+
+              critical_latency = float(latency.get("critical_api_to_db_avg_seconds", 0))
+              bulk_latency = float(latency.get("bulk_to_api_avg_seconds", 0))
+
+              edge_a_critical_packets = flow_packets(metrics, "edge-a", "critical_api_to_db")
+              edge_b_critical_packets = flow_packets(metrics, "edge-b", "critical_api_to_db")
+              edge_a_bulk_packets = flow_packets(metrics, "edge-a", "bulk_to_api")
+              edge_b_bulk_packets = flow_packets(metrics, "edge-b", "bulk_to_api")
+
+              decision = {
+                  "timestamp": datetime.utcnow().isoformat() + "Z",
+                  "mode": "dry-run",
+                  "current_policy": {
+                      "critical_api_to_db": "path-1",
+                      "bulk_to_api": "path-2",
+                  },
+                  "observed": {
+                      "critical_api_to_db_avg_seconds": critical_latency,
+                      "bulk_to_api_avg_seconds": bulk_latency,
+                      "edge_a_critical_packets": edge_a_critical_packets,
+                      "edge_b_critical_packets": edge_b_critical_packets,
+                      "edge_a_bulk_packets": edge_a_bulk_packets,
+                      "edge_b_bulk_packets": edge_b_bulk_packets,
+                  },
+                  "thresholds": {
+                      "critical_latency_target_seconds": CRITICAL_LATENCY_TARGET_SECONDS,
+                      "path_diff_margin_seconds": PATH_DIFF_MARGIN_SECONDS,
+                  },
+                  "action": None,
+                  "reason": None,
+              }
+
+              if critical_latency <= 0 or bulk_latency <= 0:
+                  decision["action"] = "insufficient_metrics"
+                  decision["reason"] = "Latency metrics are missing or zero."
+                  return decision
+
+              if critical_latency <= CRITICAL_LATENCY_TARGET_SECONDS:
+                  decision["action"] = "keep_current_paths"
+                  decision["reason"] = (
+                      "Critical api->db latency is within target. "
+                      "Keep critical traffic on path-1 and bulk/default traffic on path-2."
+                  )
+                  return decision
+
+              if bulk_latency + PATH_DIFF_MARGIN_SECONDS < critical_latency:
+                  decision["action"] = "recommend_shift_critical_to_path2"
+                  decision["reason"] = (
+                      "Critical path latency is above target and path-2 appears better. "
+                      "Recommend moving critical api->db traffic to path-2."
+                  )
+                  return decision
+
+              decision["action"] = "keep_current_paths_with_warning"
+              decision["reason"] = (
+                  "Critical latency is above target, but path-2 is not sufficiently better. "
+                  "Keep current paths and continue monitoring."
+              )
+              return decision
+
+          @app.get("/health")
+          def health():
+              return {
+                  "status": "ok",
+                  "service": "te-decision-engine",
+                  "mode": "dry-run",
+                  "collector_url": COLLECTOR_URL,
+                  "timestamp": datetime.utcnow().isoformat() + "Z",
+              }
+
+          @app.post("/decision/evaluate")
+          def decision_evaluate():
+              metrics = collect_metrics()
+              decision = evaluate(metrics)
+
+              STATE_FILE.write_text(json.dumps({
+                  "decision": decision,
+                  "metrics": metrics,
+              }, indent=2))
+
+              return {
+                  "status": "ok",
+                  "decision": decision,
+              }
+
+          @app.get("/decision/current")
+          def decision_current():
+              if not STATE_FILE.exists():
+                  return {
+                      "status": "empty",
+                      "message": "No decision has been evaluated yet.",
+                  }
+
+              return {
+                  "status": "ok",
+                  "state": json.loads(STATE_FILE.read_text()),
+              }
+
+    - name: Create Python virtualenv for TE decision engine
+      become_user: automation
+      ansible.builtin.command:
+        cmd: python3 -m venv /opt/sdn-lab/te-decision/.venv
+        creates: /opt/sdn-lab/te-decision/.venv/bin/python
+
+    - name: Install Python packages for TE decision engine
+      become_user: automation
+      ansible.builtin.shell: |
+        set -e
+        /opt/sdn-lab/te-decision/.venv/bin/pip install --upgrade pip
+        /opt/sdn-lab/te-decision/.venv/bin/pip install fastapi uvicorn requests
+      args:
+        executable: /bin/bash
+
+    - name: Create TE decision engine systemd service
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/sdn-te-decision.service
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=SDN Lab TE Decision Engine
+          After=network-online.target sdn-te-metrics.service
+          Wants=network-online.target sdn-te-metrics.service
+
+          [Service]
+          Type=simple
+          User=automation
+          Group=automation
+          WorkingDirectory=/opt/sdn-lab/te-decision
+          ExecStart=/opt/sdn-lab/te-decision/.venv/bin/uvicorn app:app --host 0.0.0.0 --port 8091
+          Restart=on-failure
+          RestartSec=3
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Enable and restart TE decision engine
+      ansible.builtin.systemd:
+        name: sdn-te-decision
+        daemon_reload: true
+        enabled: true
+        state: restarted
+
+    - name: Wait for TE decision engine
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 8091
+        timeout: 30
+
+    - name: Check TE decision engine health
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8091/health
+        method: GET
+        return_content: true
+      register: health
+
+    - name: Show decision engine health
+      ansible.builtin.debug:
+        var: health.content

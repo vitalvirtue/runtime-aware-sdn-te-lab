@@ -1,0 +1,262 @@
+- name: Configure workload VXLAN endpoints for two-edge TE baseline
+  hosts: workloads
+  become: true
+  gather_facts: false
+
+  vars:
+    vxlan_name: "vxlan-te0"
+    overlay_map:
+      lab-sdn-app-web-01:
+        ip: "172.31.210.11/24"
+        mac: "02:00:00:00:21:11"
+        edge_ip: "10.60.20.21"
+        vni: 311
+      lab-sdn-app-api-01:
+        ip: "172.31.210.12/24"
+        mac: "02:00:00:00:21:12"
+        edge_ip: "10.60.20.21"
+        vni: 312
+      lab-sdn-data-db-01:
+        ip: "172.31.210.13/24"
+        mac: "02:00:00:00:21:13"
+        edge_ip: "10.60.20.22"
+        vni: 313
+      lab-sdn-app-bulk-01:
+        ip: "172.31.210.14/24"
+        mac: "02:00:00:00:21:14"
+        edge_ip: "10.60.20.22"
+        vni: 314
+
+  tasks:
+    - name: Install workload networking tools
+      ansible.builtin.apt:
+        name:
+          - iproute2
+          - iputils-ping
+          - curl
+          - jq
+          - tcpdump
+        state: present
+        update_cache: true
+
+    - name: Configure workload VXLAN interface
+      ansible.builtin.shell: |
+        set -euo pipefail
+
+        VX="{{ vxlan_name }}"
+        EDGE="{{ overlay_map[inventory_hostname].edge_ip }}"
+        VNI="{{ overlay_map[inventory_hostname].vni }}"
+        OVERLAY="{{ overlay_map[inventory_hostname].ip }}"
+        MAC="{{ overlay_map[inventory_hostname].mac }}"
+
+        LOCAL_UNDERLAY="$(ip -4 route get "$EDGE" | awk '{for(i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}')"
+        DEV="$(ip -4 route get "$EDGE" | awk '{for(i=1;i<=NF;i++) if ($i=="dev") {print $(i+1); exit}}')"
+
+        ip link del "$VX" >/dev/null 2>&1 || true
+
+        ip link add "$VX" type vxlan \
+          id "$VNI" \
+          local "$LOCAL_UNDERLAY" \
+          remote "$EDGE" \
+          dstport 4789 \
+          dev "$DEV"
+
+        ip link set "$VX" address "$MAC"
+        ip addr add "$OVERLAY" dev "$VX"
+        ip link set "$VX" mtu 1450
+        ip link set "$VX" up
+
+        # Static neighbor entries make the test deterministic and avoid ARP flooding complexity.
+        ip neigh replace 172.31.210.11 lladdr 02:00:00:00:21:11 dev "$VX" nud permanent || true
+        ip neigh replace 172.31.210.12 lladdr 02:00:00:00:21:12 dev "$VX" nud permanent || true
+        ip neigh replace 172.31.210.13 lladdr 02:00:00:00:21:13 dev "$VX" nud permanent || true
+        ip neigh replace 172.31.210.14 lladdr 02:00:00:00:21:14 dev "$VX" nud permanent || true
+
+        echo "TE_WORKLOAD_VXLAN_READY host=$(hostname) local_underlay=${LOCAL_UNDERLAY} edge=${EDGE} vni=${VNI} overlay=${OVERLAY}"
+      args:
+        executable: /bin/bash
+      register: workload_vxlan
+
+    - name: Show workload VXLAN result
+      ansible.builtin.debug:
+        var: workload_vxlan.stdout_lines
+
+
+- name: Configure edge-a for two-path TE baseline
+  hosts: lab-sdn-edge-ovs-a-01
+  become: true
+  gather_facts: false
+
+  vars:
+    bridge: br-edge0
+
+  tasks:
+    - name: Ensure OVS bridge baseline
+      ansible.builtin.shell: |
+        set -e
+        ovs-vsctl --may-exist add-br {{ bridge }}
+        ovs-vsctl set bridge {{ bridge }} protocols=OpenFlow13
+        ovs-vsctl set-fail-mode {{ bridge }} standalone
+      args:
+        executable: /bin/bash
+
+    - name: Remove old TE ports on edge-a
+      ansible.builtin.shell: |
+        set -e
+        for p in vx-web-te vx-api-te path1-to-b path2-to-b; do
+          ovs-vsctl --if-exists del-port {{ bridge }} "$p"
+        done
+      args:
+        executable: /bin/bash
+
+    - name: Create workload and path VXLAN ports on edge-a
+      ansible.builtin.shell: |
+        set -e
+
+        # Workload access ports
+        ovs-vsctl --may-exist add-port {{ bridge }} vx-web-te \
+          -- set interface vx-web-te type=vxlan options:key=311 options:remote_ip=10.60.20.31 options:dst_port=4789
+
+        ovs-vsctl --may-exist add-port {{ bridge }} vx-api-te \
+          -- set interface vx-api-te type=vxlan options:key=312 options:remote_ip=10.60.20.32 options:dst_port=4789
+
+        # Inter-edge TE paths
+        ovs-vsctl --may-exist add-port {{ bridge }} path1-to-b \
+          -- set interface path1-to-b type=vxlan options:key=301 options:remote_ip=10.60.20.22 options:dst_port=4789
+
+        ovs-vsctl --may-exist add-port {{ bridge }} path2-to-b \
+          -- set interface path2-to-b type=vxlan options:key=302 options:remote_ip=10.60.20.22 options:dst_port=4789
+      args:
+        executable: /bin/bash
+
+    - name: Install edge-a traffic engineering flows
+      ansible.builtin.shell: |
+        set -euo pipefail
+
+        BR="{{ bridge }}"
+
+        WEB_PORT="$(ovs-vsctl get Interface vx-web-te ofport)"
+        API_PORT="$(ovs-vsctl get Interface vx-api-te ofport)"
+        P1_PORT="$(ovs-vsctl get Interface path1-to-b ofport)"
+        P2_PORT="$(ovs-vsctl get Interface path2-to-b ofport)"
+
+        ovs-ofctl -O OpenFlow13 del-flows "$BR"
+
+        # WEB <-> API local allow on edge-a
+        ovs-ofctl -O OpenFlow13 add-flow "$BR" "priority=400,ip,nw_src=172.31.210.11,nw_dst=172.31.210.12,actions=output:${API_PORT}"
+        ovs-ofctl -O OpenFlow13 add-flow "$BR" "priority=400,ip,nw_src=172.31.210.12,nw_dst=172.31.210.11,actions=output:${WEB_PORT}"
+
+        # API -> DB critical traffic uses path-1
+        ovs-ofctl -O OpenFlow13 add-flow "$BR" "priority=400,ip,nw_src=172.31.210.12,nw_dst=172.31.210.13,actions=output:${P1_PORT}"
+
+        # DB -> API return traffic comes from path-1 and exits API access port
+        ovs-ofctl -O OpenFlow13 add-flow "$BR" "priority=400,ip,nw_src=172.31.210.13,nw_dst=172.31.210.12,actions=output:${API_PORT}"
+
+        # BULK -> API default/bulk traffic uses path-2
+        ovs-ofctl -O OpenFlow13 add-flow "$BR" "priority=400,ip,nw_src=172.31.210.14,nw_dst=172.31.210.12,actions=output:${API_PORT}"
+        ovs-ofctl -O OpenFlow13 add-flow "$BR" "priority=400,ip,nw_src=172.31.210.12,nw_dst=172.31.210.14,actions=output:${P2_PORT}"
+
+        # Explicit denies for documentation/readability
+        ovs-ofctl -O OpenFlow13 add-flow "$BR" "priority=500,ip,nw_src=172.31.210.11,nw_dst=172.31.210.13,actions=drop"
+
+        # Default deny
+        ovs-ofctl -O OpenFlow13 add-flow "$BR" "priority=0,actions=drop"
+
+        echo "EDGE_A_PORTS web=${WEB_PORT} api=${API_PORT} path1=${P1_PORT} path2=${P2_PORT}"
+        ovs-ofctl -O OpenFlow13 dump-flows "$BR"
+      args:
+        executable: /bin/bash
+      register: edge_a_flows
+
+    - name: Show edge-a flows
+      ansible.builtin.debug:
+        var: edge_a_flows.stdout_lines
+
+
+- name: Configure edge-b for two-path TE baseline
+  hosts: lab-sdn-edge-ovs-b-01
+  become: true
+  gather_facts: false
+
+  vars:
+    bridge: br-edge0
+
+  tasks:
+    - name: Ensure OVS bridge baseline
+      ansible.builtin.shell: |
+        set -e
+        ovs-vsctl --may-exist add-br {{ bridge }}
+        ovs-vsctl set bridge {{ bridge }} protocols=OpenFlow13
+        ovs-vsctl set-fail-mode {{ bridge }} standalone
+      args:
+        executable: /bin/bash
+
+    - name: Remove old TE ports on edge-b
+      ansible.builtin.shell: |
+        set -e
+        for p in vx-db-te vx-bulk-te path1-to-a path2-to-a; do
+          ovs-vsctl --if-exists del-port {{ bridge }} "$p"
+        done
+      args:
+        executable: /bin/bash
+
+    - name: Create workload and path VXLAN ports on edge-b
+      ansible.builtin.shell: |
+        set -e
+
+        # Workload access ports
+        ovs-vsctl --may-exist add-port {{ bridge }} vx-db-te \
+          -- set interface vx-db-te type=vxlan options:key=313 options:remote_ip=10.60.20.33 options:dst_port=4789
+
+        ovs-vsctl --may-exist add-port {{ bridge }} vx-bulk-te \
+          -- set interface vx-bulk-te type=vxlan options:key=314 options:remote_ip=10.60.20.34 options:dst_port=4789
+
+        # Inter-edge TE paths
+        ovs-vsctl --may-exist add-port {{ bridge }} path1-to-a \
+          -- set interface path1-to-a type=vxlan options:key=301 options:remote_ip=10.60.20.21 options:dst_port=4789
+
+        ovs-vsctl --may-exist add-port {{ bridge }} path2-to-a \
+          -- set interface path2-to-a type=vxlan options:key=302 options:remote_ip=10.60.20.21 options:dst_port=4789
+      args:
+        executable: /bin/bash
+
+    - name: Install edge-b traffic engineering flows
+      ansible.builtin.shell: |
+        set -euo pipefail
+
+        BR="{{ bridge }}"
+
+        DB_PORT="$(ovs-vsctl get Interface vx-db-te ofport)"
+        BULK_PORT="$(ovs-vsctl get Interface vx-bulk-te ofport)"
+        P1_PORT="$(ovs-vsctl get Interface path1-to-a ofport)"
+        P2_PORT="$(ovs-vsctl get Interface path2-to-a ofport)"
+
+        ovs-ofctl -O OpenFlow13 del-flows "$BR"
+
+        # API -> DB critical traffic comes from path-1 and exits DB access port
+        ovs-ofctl -O OpenFlow13 add-flow "$BR" "priority=400,ip,nw_src=172.31.210.12,nw_dst=172.31.210.13,actions=output:${DB_PORT}"
+
+        # DB -> API return traffic uses path-1
+        ovs-ofctl -O OpenFlow13 add-flow "$BR" "priority=400,ip,nw_src=172.31.210.13,nw_dst=172.31.210.12,actions=output:${P1_PORT}"
+
+        # BULK -> API default/bulk traffic uses path-2
+        ovs-ofctl -O OpenFlow13 add-flow "$BR" "priority=400,ip,nw_src=172.31.210.14,nw_dst=172.31.210.12,actions=output:${P2_PORT}"
+
+        # API -> BULK return traffic comes from path-2 and exits BULK access port
+        ovs-ofctl -O OpenFlow13 add-flow "$BR" "priority=400,ip,nw_src=172.31.210.12,nw_dst=172.31.210.14,actions=output:${BULK_PORT}"
+
+        # Explicit deny for bulk -> db
+        ovs-ofctl -O OpenFlow13 add-flow "$BR" "priority=500,ip,nw_src=172.31.210.14,nw_dst=172.31.210.13,actions=drop"
+
+        # Default deny
+        ovs-ofctl -O OpenFlow13 add-flow "$BR" "priority=0,actions=drop"
+
+        echo "EDGE_B_PORTS db=${DB_PORT} bulk=${BULK_PORT} path1=${P1_PORT} path2=${P2_PORT}"
+        ovs-ofctl -O OpenFlow13 dump-flows "$BR"
+      args:
+        executable: /bin/bash
+      register: edge_b_flows
+
+    - name: Show edge-b flows
+      ansible.builtin.debug:
+        var: edge_b_flows.stdout_lines

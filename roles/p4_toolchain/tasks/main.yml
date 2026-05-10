@@ -1,0 +1,106 @@
+- name: Install P4/BMv2 build dependencies
+  ansible.builtin.apt:
+    name:
+      - git
+      - cmake
+      - automake
+      - libtool
+      - pkg-config
+      - g++
+      - gcc
+      - bison
+      - flex
+      - libgc-dev
+      - libgmp-dev
+      - libboost-dev
+      - libboost-iostreams-dev
+      - libboost-graph-dev
+      - libboost-system-dev
+      - libboost-filesystem-dev
+      - libboost-program-options-dev
+      - libboost-test-dev
+      - libevent-dev
+      - libfl-dev
+      - libreadline-dev
+      - libssl-dev
+      - libelf-dev
+      - zlib1g-dev
+      - protobuf-compiler
+      - libprotobuf-dev
+      - python3
+      - python3-pip
+      - python3-setuptools
+      - python3-wheel
+      - python3-scapy
+      - tcpdump
+      - unzip
+      - xz-utils
+      - wget
+    state: present
+    update_cache: true
+
+- name: Ensure source directory exists
+  ansible.builtin.file:
+    path: /opt/sdn-lab/src
+    state: directory
+    mode: '0755'
+
+- name: Clone BMv2 pinned release
+  ansible.builtin.git:
+    repo: https://github.com/p4lang/behavioral-model.git
+    dest: /opt/sdn-lab/src/behavioral-model
+    version: "1.15.1"
+
+- name: Build BMv2 dependencies
+  ansible.builtin.command:
+    cmd: ./install_deps.sh
+    chdir: /opt/sdn-lab/src/behavioral-model
+  changed_when: true
+
+- name: Configure BMv2
+  ansible.builtin.command:
+    cmd: ./autogen.sh && ./configure
+    chdir: /opt/sdn-lab/src/behavioral-model
+  changed_when: true
+  args:
+    creates: /opt/sdn-lab/src/behavioral-model/Makefile
+  environment:
+    LC_ALL: C
+  failed_when: false
+
+- name: Build and install BMv2
+  ansible.builtin.shell: |
+    set -e
+    ./autogen.sh
+    ./configure
+    make -j"$(nproc)"
+    make install
+    ldconfig
+  args:
+    chdir: /opt/sdn-lab/src/behavioral-model
+  changed_when: true
+
+- name: Clone p4c pinned release
+  ansible.builtin.git:
+    repo: https://github.com/p4lang/p4c.git
+    dest: /opt/sdn-lab/src/p4c
+    version: "v1.2.5.13"
+
+- name: Update p4c submodules
+  ansible.builtin.command:
+    cmd: git submodule update --init --recursive
+    chdir: /opt/sdn-lab/src/p4c
+  changed_when: true
+
+- name: Configure, build and install p4c
+  ansible.builtin.shell: |
+    set -e
+    mkdir -p build
+    cd build
+    cmake ..
+    make -j"$(nproc)"
+    make install
+    ldconfig
+  args:
+    chdir: /opt/sdn-lab/src/p4c
+  changed_when: true

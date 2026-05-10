@@ -1,0 +1,50 @@
+- name: Roll back default eBPF agent to Python-backed implementation
+  hosts: workloads
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Restore Python-backed eBPF agent service
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/sdn-ebpf-agent.service
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=SDN Lab eBPF Agent - Python bpftrace Stable
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=simple
+          User=root
+          Group=root
+          EnvironmentFile=/etc/sdn-ebpf-agent.env
+          ExecStart=/usr/bin/python3 /opt/sdn-lab/ebpf/agent/sdn-ebpf-agent.py
+          Restart=always
+          RestartSec=3
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Restart Python-backed eBPF agent
+      ansible.builtin.systemd:
+        name: sdn-ebpf-agent
+        daemon_reload: true
+        enabled: true
+        state: restarted
+
+    - name: Confirm rollback agent active
+      ansible.builtin.shell: |
+        set -e
+        systemctl is-active sdn-ebpf-agent
+        journalctl -u sdn-ebpf-agent -n 20 --no-pager
+      args:
+        executable: /bin/bash
+      register: rollback_status
+      changed_when: false
+
+    - name: Show rollback status
+      ansible.builtin.debug:
+        var: rollback_status.stdout_lines

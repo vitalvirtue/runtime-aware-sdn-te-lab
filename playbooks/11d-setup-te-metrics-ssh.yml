@@ -1,0 +1,85 @@
+- name: Create dedicated TE metrics SSH key on controller
+  hosts: control
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Ensure automation .ssh directory exists
+      ansible.builtin.file:
+        path: /home/automation/.ssh
+        state: directory
+        owner: automation
+        group: automation
+        mode: "0700"
+
+    - name: Generate dedicated TE metrics SSH key
+      become_user: automation
+      ansible.builtin.command:
+        cmd: ssh-keygen -t ed25519 -f /home/automation/.ssh/id_ed25519_te_metrics -N "" -C "sdn-te-metrics@lab"
+        creates: /home/automation/.ssh/id_ed25519_te_metrics
+
+    - name: Read TE metrics public key
+      ansible.builtin.slurp:
+        src: /home/automation/.ssh/id_ed25519_te_metrics.pub
+      register: te_metrics_pubkey_raw
+
+    - name: Store public key as fact
+      ansible.builtin.set_fact:
+        te_metrics_pubkey: "{{ te_metrics_pubkey_raw.content | b64decode }}"
+
+
+- name: Authorize controller TE metrics key on edge and workload nodes
+  hosts: edge:workloads
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Ensure automation .ssh directory exists
+      ansible.builtin.file:
+        path: /home/automation/.ssh
+        state: directory
+        owner: automation
+        group: automation
+        mode: "0700"
+
+    - name: Authorize TE metrics collector key
+      ansible.posix.authorized_key:
+        user: automation
+        key: "{{ hostvars[groups['control'][0]].te_metrics_pubkey }}"
+        state: present
+        manage_dir: false
+
+
+- name: Add edge and workload hosts to controller known_hosts
+  hosts: control
+  become: true
+  gather_facts: false
+
+  vars:
+    te_metric_hosts:
+      - 10.60.10.21
+      - 10.60.10.22
+      - 10.60.10.31
+      - 10.60.10.32
+      - 10.60.10.33
+      - 10.60.10.34
+
+  tasks:
+    - name: Add known_hosts entries
+      become_user: automation
+      ansible.builtin.shell: |
+        set -e
+        mkdir -p /home/automation/.ssh
+        touch /home/automation/.ssh/known_hosts
+        ssh-keyscan -H {{ item }} >> /home/automation/.ssh/known_hosts 2>/dev/null || true
+        sort -u /home/automation/.ssh/known_hosts -o /home/automation/.ssh/known_hosts
+      args:
+        executable: /bin/bash
+      loop: "{{ te_metric_hosts }}"
+
+    - name: Fix known_hosts permissions
+      ansible.builtin.file:
+        path: /home/automation/.ssh/known_hosts
+        owner: automation
+        group: automation
+        mode: "0644"

@@ -1,0 +1,52 @@
+- name: Verify real workload traffic through OVS edge overlay
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: WEB overlay can reach API overlay
+      ansible.builtin.shell: |
+        ssh -o StrictHostKeyChecking=no automation@10.60.10.31 \
+          "curl -fsS http://172.31.200.12:18080/health"
+      register: web_to_api
+      changed_when: false
+
+    - name: API overlay can reach DB overlay
+      ansible.builtin.shell: |
+        ssh -o StrictHostKeyChecking=no automation@10.60.10.32 \
+          "curl -fsS http://172.31.200.13:15432/health"
+      register: api_to_db
+      changed_when: false
+
+    - name: WEB overlay must not reach DB overlay
+      ansible.builtin.shell: |
+        ssh -o StrictHostKeyChecking=no automation@10.60.10.31 \
+          "timeout 4 curl -fsS http://172.31.200.13:15432/health"
+      register: web_to_db
+      changed_when: false
+      failed_when: false
+
+    - name: BULK overlay must not reach DB overlay
+      ansible.builtin.shell: |
+        ssh -o StrictHostKeyChecking=no automation@10.60.10.34 \
+          "timeout 4 curl -fsS http://172.31.200.13:15432/health"
+      register: bulk_to_db
+      changed_when: false
+      failed_when: false
+
+    - name: Show overlay test results
+      ansible.builtin.debug:
+        msg:
+          web_to_api_rc: "{{ web_to_api.rc }}"
+          api_to_db_rc: "{{ api_to_db.rc }}"
+          web_to_db_rc: "{{ web_to_db.rc }}"
+          bulk_to_db_rc: "{{ bulk_to_db.rc }}"
+
+    - name: Assert OVS overlay policy behavior
+      ansible.builtin.assert:
+        that:
+          - web_to_api.rc == 0
+          - api_to_db.rc == 0
+          - web_to_db.rc != 0
+          - bulk_to_db.rc != 0
+        success_msg: "OVS_EDGE_OVERLAY_WORKLOAD_POLICY_PASS"
+        fail_msg: "OVS edge overlay workload policy failed."

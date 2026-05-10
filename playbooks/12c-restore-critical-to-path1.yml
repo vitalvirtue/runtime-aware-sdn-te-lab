@@ -1,0 +1,51 @@
+- name: Restore critical api->db traffic to path-1
+  hosts: edge
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Restore critical traffic to path-1
+      ansible.builtin.shell: |
+        set -euo pipefail
+
+        BR="br-edge0"
+        host="$(hostname)"
+
+        if [ "$host" = "lab-sdn-edge-ovs-a-01" ]; then
+          API_PORT="$(ovs-vsctl get Interface vx-api-te ofport)"
+          P1_PORT="$(ovs-vsctl get Interface path1-to-b ofport)"
+
+          # api -> db critical traffic goes back to path-1.
+          ovs-ofctl -O OpenFlow13 del-flows "$BR" "ip,nw_src=172.31.210.12,nw_dst=172.31.210.13"
+          ovs-ofctl -O OpenFlow13 add-flow "$BR" "priority=400,ip,nw_src=172.31.210.12,nw_dst=172.31.210.13,actions=output:${P1_PORT}"
+
+          # db -> api return exits API access port on edge-a.
+          ovs-ofctl -O OpenFlow13 del-flows "$BR" "ip,nw_src=172.31.210.13,nw_dst=172.31.210.12"
+          ovs-ofctl -O OpenFlow13 add-flow "$BR" "priority=400,ip,nw_src=172.31.210.13,nw_dst=172.31.210.12,actions=output:${API_PORT}"
+
+          echo "EDGE_A_RESTORED_CRITICAL_TO_PATH1 api_port=${API_PORT} path1=${P1_PORT}"
+        fi
+
+        if [ "$host" = "lab-sdn-edge-ovs-b-01" ]; then
+          DB_PORT="$(ovs-vsctl get Interface vx-db-te ofport)"
+          P1_PORT="$(ovs-vsctl get Interface path1-to-a ofport)"
+
+          # api -> db arrives from path-1 and exits DB access port.
+          ovs-ofctl -O OpenFlow13 del-flows "$BR" "ip,nw_src=172.31.210.12,nw_dst=172.31.210.13"
+          ovs-ofctl -O OpenFlow13 add-flow "$BR" "priority=400,ip,nw_src=172.31.210.12,nw_dst=172.31.210.13,actions=output:${DB_PORT}"
+
+          # db -> api return traffic goes back to path-1.
+          ovs-ofctl -O OpenFlow13 del-flows "$BR" "ip,nw_src=172.31.210.13,nw_dst=172.31.210.12"
+          ovs-ofctl -O OpenFlow13 add-flow "$BR" "priority=400,ip,nw_src=172.31.210.13,nw_dst=172.31.210.12,actions=output:${P1_PORT}"
+
+          echo "EDGE_B_RESTORED_CRITICAL_TO_PATH1 db_port=${DB_PORT} path1=${P1_PORT}"
+        fi
+
+        ovs-ofctl -O OpenFlow13 dump-flows "$BR" | egrep '172.31.210.12|172.31.210.13|priority=0'
+      args:
+        executable: /bin/bash
+      register: restore_flows
+
+    - name: Show restored critical path flows
+      ansible.builtin.debug:
+        var: restore_flows.stdout_lines

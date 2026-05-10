@@ -1,0 +1,108 @@
+- name: Verify TE actuator API
+  hosts: control
+  gather_facts: false
+
+  tasks:
+    - name: Check actuator health
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8092/health
+        method: GET
+        return_content: true
+      register: health
+
+    - name: Evaluate degraded-path decision
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8091/decision/evaluate
+        method: POST
+        return_content: true
+      register: decision_eval
+
+    - name: Parse decision
+      ansible.builtin.set_fact:
+        decision_json: "{{ decision_eval.content | from_json }}"
+
+    - name: Show decision before actuator apply
+      ansible.builtin.debug:
+        var: decision_json
+
+    - name: Assert decision recommends critical shift
+      ansible.builtin.assert:
+        that:
+          - decision_json.status == "ok"
+          - decision_json.decision.action == "recommend_shift_critical_to_path2"
+        success_msg: "TE_ACTUATOR_PRECHECK_DECISION_PASS"
+        fail_msg: "Decision engine did not recommend shifting critical traffic."
+
+    - name: Apply critical shift through actuator API
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8092/actuator/apply-critical-path2
+        method: POST
+        return_content: true
+      register: actuator_apply
+
+    - name: Parse actuator apply
+      ansible.builtin.set_fact:
+        apply_json: "{{ actuator_apply.content | from_json }}"
+
+    - name: Show actuator apply result
+      ansible.builtin.debug:
+        var: apply_json
+
+    - name: Assert actuator apply succeeded
+      ansible.builtin.assert:
+        that:
+          - apply_json.status == "ok"
+          - apply_json.state.result['edge-a'].rc == 0
+          - apply_json.state.result['edge-b'].rc == 0
+        success_msg: "TE_ACTUATOR_APPLY_CRITICAL_PATH2_PASS"
+        fail_msg: "TE actuator apply failed."
+
+    - name: Collect metrics after actuator apply
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8090/metrics/collect
+        method: POST
+        return_content: true
+      register: metrics_collect
+
+    - name: Parse metrics
+      ansible.builtin.set_fact:
+        metrics_json: "{{ metrics_collect.content | from_json }}"
+
+    - name: Show latency after actuator apply
+      ansible.builtin.debug:
+        msg:
+          critical_api_to_db_avg_seconds: "{{ metrics_json.metrics.latency.critical_api_to_db_avg_seconds }}"
+          bulk_to_api_avg_seconds: "{{ metrics_json.metrics.latency.bulk_to_api_avg_seconds }}"
+
+    - name: Assert actuator improved critical latency
+      ansible.builtin.assert:
+        that:
+          - metrics_json.status == "ok"
+          - metrics_json.metrics.latency.critical_api_to_db_avg_seconds | float > 0
+          - metrics_json.metrics.latency.critical_api_to_db_avg_seconds | float < 1.0
+        success_msg: "TE_ACTUATOR_LATENCY_IMPROVEMENT_PASS"
+        fail_msg: "Critical latency did not improve after actuator apply."
+
+    - name: Restore critical path through actuator API
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8092/actuator/restore-critical-path1
+        method: POST
+        return_content: true
+      register: actuator_restore
+
+    - name: Parse actuator restore
+      ansible.builtin.set_fact:
+        restore_json: "{{ actuator_restore.content | from_json }}"
+
+    - name: Assert actuator restore succeeded
+      ansible.builtin.assert:
+        that:
+          - restore_json.status == "ok"
+          - restore_json.state.result['edge-a'].rc == 0
+          - restore_json.state.result['edge-b'].rc == 0
+        success_msg: "TE_ACTUATOR_RESTORE_CRITICAL_PATH1_PASS"
+        fail_msg: "TE actuator restore failed."
+
+    - name: Mark actuator baseline passed
+      ansible.builtin.debug:
+        msg: "TE_ACTUATOR_API_BASELINE_PASS"

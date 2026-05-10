@@ -1,0 +1,74 @@
+- name: Deploy eBPF tcpconnect BCC tooling on workload nodes
+  hosts: workloads
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Install BCC tcpconnect dependencies
+      ansible.builtin.apt:
+        name:
+          - bpfcc-tools
+          - python3-bpfcc
+          - linux-perf
+          - curl
+          - jq
+        state: present
+        update_cache: true
+
+    - name: Create eBPF tcpconnect runner
+      ansible.builtin.copy:
+        dest: /opt/sdn-lab/ebpf/run-tcpconnect-bcc-smoke.sh
+        owner: root
+        group: root
+        mode: "0755"
+        content: |
+          #!/usr/bin/env bash
+          set -euo pipefail
+
+          HOST="$(hostname)"
+          LOG="/opt/sdn-lab/ebpf/logs/tcpconnect-bcc-smoke.log"
+          TOOL=""
+
+          if command -v tcpconnect-bpfcc >/dev/null 2>&1; then
+            TOOL="$(command -v tcpconnect-bpfcc)"
+          elif [ -x /usr/sbin/tcpconnect-bpfcc ]; then
+            TOOL="/usr/sbin/tcpconnect-bpfcc"
+          else
+            echo "TCP_CONNECT_BCC_TOOL_NOT_FOUND"
+            exit 1
+          fi
+
+          rm -f "$LOG"
+
+          echo "EBPF_TCPCONNECT_BCC_HOST=$HOST"
+          echo "EBPF_TCPCONNECT_BCC_TOOL=$TOOL"
+
+          timeout 12s "$TOOL" > "$LOG" 2>&1 &
+          BPF_PID="$!"
+
+          sleep 4
+
+          case "$HOST" in
+            lab-sdn-app-web-01)
+              echo "GENERATE_TRAFFIC web->api"
+              curl -fsS http://172.31.210.12:18080/health >/dev/null || true
+              ;;
+            lab-sdn-app-api-01)
+              echo "GENERATE_TRAFFIC api->db"
+              curl -fsS http://172.31.210.13:15432/health >/dev/null || true
+              ;;
+            lab-sdn-data-db-01)
+              echo "GENERATE_TRAFFIC db->api"
+              curl -fsS http://172.31.210.12:18080/health >/dev/null || true
+              ;;
+            lab-sdn-app-bulk-01)
+              echo "GENERATE_TRAFFIC bulk->api"
+              curl -fsS http://172.31.210.12:18080/health >/dev/null || true
+              ;;
+          esac
+
+          sleep 2
+          wait "$BPF_PID" || true
+
+          echo "----- tcpconnect-bpfcc output -----"
+          cat "$LOG"

@@ -1,0 +1,207 @@
+- import_playbook: 11a-deploy-two-edge-te-baseline.yml
+
+
+- name: Generate traffic for TE counter baseline
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Generate WEB -> API local traffic
+      ansible.builtin.shell: |
+        set -e
+        ssh -o StrictHostKeyChecking=no automation@10.60.10.31 '
+          for i in $(seq 1 20); do
+            curl -fsS http://172.31.210.12:18080/health >/dev/null
+          done
+        '
+      changed_when: true
+
+    - name: Generate API -> DB critical path-1 traffic
+      ansible.builtin.shell: |
+        set -e
+        ssh -o StrictHostKeyChecking=no automation@10.60.10.32 '
+          for i in $(seq 1 30); do
+            curl -fsS http://172.31.210.13:15432/health >/dev/null
+          done
+        '
+      changed_when: true
+
+    - name: Generate BULK -> API bulk/default path-2 traffic
+      ansible.builtin.shell: |
+        set -e
+        ssh -o StrictHostKeyChecking=no automation@10.60.10.34 '
+          for i in $(seq 1 30); do
+            curl -fsS http://172.31.210.12:18080/health >/dev/null
+          done
+        '
+      changed_when: true
+
+    - name: Generate denied WEB -> DB attempts
+      ansible.builtin.shell: |
+        ssh -o StrictHostKeyChecking=no automation@10.60.10.31 '
+          for i in $(seq 1 5); do
+            timeout 2 curl -fsS http://172.31.210.13:15432/health >/dev/null || true
+          done
+        '
+      changed_when: true
+
+    - name: Generate denied BULK -> DB attempts
+      ansible.builtin.shell: |
+        ssh -o StrictHostKeyChecking=no automation@10.60.10.34 '
+          for i in $(seq 1 5); do
+            timeout 2 curl -fsS http://172.31.210.13:15432/health >/dev/null || true
+          done
+        '
+      changed_when: true
+
+
+- name: Verify TE flow counters on edge-a
+  hosts: lab-sdn-edge-ovs-a-01
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Dump edge-a OVS flows
+      ansible.builtin.command: ovs-ofctl -O OpenFlow13 dump-flows br-edge0
+      register: edge_a_flows
+      changed_when: false
+
+    - name: Show edge-a flow counters
+      ansible.builtin.debug:
+        var: edge_a_flows.stdout_lines
+
+    - name: Validate edge-a TE counters
+      ansible.builtin.shell: |
+        set -euo pipefail
+
+        ovs-ofctl -O OpenFlow13 dump-flows br-edge0 > /tmp/edge-a-flows.txt
+
+        get_packets() {
+          local src="$1"
+          local dst="$2"
+          local line
+          line="$(grep -F "nw_src=${src}" /tmp/edge-a-flows.txt | grep -F "nw_dst=${dst}" | head -n 1 || true)"
+
+          if [ -z "$line" ]; then
+            echo "FLOW_NOT_FOUND"
+            return 0
+          fi
+
+          echo "$line" | sed -n 's/.*n_packets=\([0-9][0-9]*\).*/\1/p'
+        }
+
+        check_flow() {
+          local name="$1"
+          local src="$2"
+          local dst="$3"
+          local packets
+
+          packets="$(get_packets "$src" "$dst")"
+
+          echo "${name} packets=${packets}"
+
+          if [ "$packets" = "FLOW_NOT_FOUND" ] || [ -z "$packets" ]; then
+            echo "FAIL ${name}: flow not found"
+            return 1
+          fi
+
+          if [ "$packets" -le 0 ]; then
+            echo "FAIL ${name}: expected packets > 0"
+            return 1
+          fi
+        }
+
+        check_flow "web_to_api_local"       "172.31.210.11" "172.31.210.12"
+        check_flow "api_to_db_path1"        "172.31.210.12" "172.31.210.13"
+        check_flow "bulk_to_api_from_path2" "172.31.210.14" "172.31.210.12"
+        check_flow "web_to_db_denied"       "172.31.210.11" "172.31.210.13"
+
+        echo "EDGE_A_TE_COUNTERS_PASS"
+      args:
+        executable: /bin/bash
+      register: edge_a_counter_check
+
+    - name: Show edge-a counter validation
+      ansible.builtin.debug:
+        var: edge_a_counter_check.stdout_lines
+
+
+- name: Verify TE flow counters on edge-b
+  hosts: lab-sdn-edge-ovs-b-01
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Dump edge-b OVS flows
+      ansible.builtin.command: ovs-ofctl -O OpenFlow13 dump-flows br-edge0
+      register: edge_b_flows
+      changed_when: false
+
+    - name: Show edge-b flow counters
+      ansible.builtin.debug:
+        var: edge_b_flows.stdout_lines
+
+    - name: Validate edge-b TE counters
+      ansible.builtin.shell: |
+        set -euo pipefail
+
+        ovs-ofctl -O OpenFlow13 dump-flows br-edge0 > /tmp/edge-b-flows.txt
+
+        get_packets() {
+          local src="$1"
+          local dst="$2"
+          local line
+          line="$(grep -F "nw_src=${src}" /tmp/edge-b-flows.txt | grep -F "nw_dst=${dst}" | head -n 1 || true)"
+
+          if [ -z "$line" ]; then
+            echo "FLOW_NOT_FOUND"
+            return 0
+          fi
+
+          echo "$line" | sed -n 's/.*n_packets=\([0-9][0-9]*\).*/\1/p'
+        }
+
+        check_flow() {
+          local name="$1"
+          local src="$2"
+          local dst="$3"
+          local packets
+
+          packets="$(get_packets "$src" "$dst")"
+
+          echo "${name} packets=${packets}"
+
+          if [ "$packets" = "FLOW_NOT_FOUND" ] || [ -z "$packets" ]; then
+            echo "FAIL ${name}: flow not found"
+            return 1
+          fi
+
+          if [ "$packets" -le 0 ]; then
+            echo "FAIL ${name}: expected packets > 0"
+            return 1
+          fi
+        }
+
+        check_flow "api_to_db_from_path1"   "172.31.210.12" "172.31.210.13"
+        check_flow "db_to_api_return_path1" "172.31.210.13" "172.31.210.12"
+        check_flow "bulk_to_api_path2"      "172.31.210.14" "172.31.210.12"
+        check_flow "bulk_to_db_denied"      "172.31.210.14" "172.31.210.13"
+
+        echo "EDGE_B_TE_COUNTERS_PASS"
+      args:
+        executable: /bin/bash
+      register: edge_b_counter_check
+
+    - name: Show edge-b counter validation
+      ansible.builtin.debug:
+        var: edge_b_counter_check.stdout_lines
+
+
+- name: Final TE counter assertion
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Mark TE counter baseline passed
+      ansible.builtin.debug:
+        msg: "TE_PATH_COUNTER_BASELINE_PASS"

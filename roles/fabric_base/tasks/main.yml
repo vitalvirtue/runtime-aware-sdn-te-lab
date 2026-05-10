@@ -1,0 +1,29 @@
+- name: Install fabric base packages
+  ansible.builtin.apt:
+    name:
+      - mininet
+      - openvswitch-switch
+      - bridge-utils
+      - make
+      - gcc
+      - g++
+      - python3-dev
+      - tcpdump
+    state: present
+
+- name: Enable OVS on fabric node
+  ansible.builtin.service:
+    name: openvswitch-switch
+    enabled: true
+    state: started
+
+- name: Create work directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+  loop:
+    - /opt/sdn-lab
+    - /opt/sdn-lab/mininet
+    - /opt/sdn-lab/p4
+    - /opt/sdn-lab/stratum

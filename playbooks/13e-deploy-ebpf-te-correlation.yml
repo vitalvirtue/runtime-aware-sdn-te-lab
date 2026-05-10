@@ -1,0 +1,143 @@
+- name: Add eBPF and TE metrics correlation endpoint
+  hosts: control
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Add correlation endpoints to TE metrics collector app
+      ansible.builtin.blockinfile:
+        path: /opt/sdn-lab/te-metrics/app.py
+        marker: "# {mark} ANSIBLE MANAGED BLOCK - eBPF TE correlation endpoints"
+        insertafter: EOF
+        block: |
+          # --- eBPF / TE correlation endpoints ---
+
+          CORRELATION_FILE = Path("/opt/sdn-lab/te-metrics/state/correlation_current.json")
+
+          FLOW_EXPECTED_PATH = {
+              "web_to_api": "edge-a-local",
+              "critical_api_to_db": "path-1",
+              "db_to_api": "path-1-return",
+              "bulk_to_api": "path-2",
+              "denied_web_to_db": "drop",
+              "denied_bulk_to_db": "drop",
+          }
+
+          FLOW_LATENCY_KEY = {
+              "critical_api_to_db": "critical_api_to_db_avg_seconds",
+              "bulk_to_api": "bulk_to_api_avg_seconds",
+          }
+
+          def _load_ebpf_events(limit: int = 1000):
+              if not EBPF_EVENTS_FILE.exists():
+                  return []
+
+              lines = EBPF_EVENTS_FILE.read_text(
+                  encoding="utf-8",
+                  errors="ignore",
+              ).splitlines()
+
+              events = []
+
+              for line in lines[-limit:]:
+                  try:
+                      item = json.loads(line)
+                      if isinstance(item, dict):
+                          events.append(item)
+                  except Exception:
+                      pass
+
+              return events
+
+          def _sum_flow_packets(edge_metrics, flow_class):
+              total_packets = 0
+              total_bytes = 0
+              matched = []
+
+              for flow in edge_metrics.get("flows", []):
+                  if flow.get("class") == flow_class:
+                      total_packets += int(flow.get("packets", 0))
+                      total_bytes += int(flow.get("bytes", 0))
+                      matched.append(flow)
+
+              return {
+                  "packets": total_packets,
+                  "bytes": total_bytes,
+                  "matched_flows": matched,
+              }
+
+          def _build_correlation(metrics, ebpf_events):
+              flow_classes = sorted(
+                  set([event.get("flow_class", "unknown") for event in ebpf_events])
+              )
+
+              correlations = []
+
+              for flow_class in flow_classes:
+                  host_events = [
+                      event for event in ebpf_events
+                      if event.get("flow_class") == flow_class
+                  ]
+
+                  edge_a = _sum_flow_packets(
+                      metrics.get("edges", {}).get("edge-a", {}),
+                      flow_class,
+                  )
+                  edge_b = _sum_flow_packets(
+                      metrics.get("edges", {}).get("edge-b", {}),
+                      flow_class,
+                  )
+
+                  latency_key = FLOW_LATENCY_KEY.get(flow_class)
+                  latency_seconds = None
+
+                  if latency_key:
+                      latency_seconds = metrics.get("latency", {}).get(latency_key)
+
+                  correlations.append({
+                      "flow_class": flow_class,
+                      "expected_path": FLOW_EXPECTED_PATH.get(flow_class, "unknown"),
+                      "host_event_count": len(host_events),
+                      "host_events": host_events,
+                      "network_metrics": {
+                          "edge_a_packets": edge_a["packets"],
+                          "edge_a_bytes": edge_a["bytes"],
+                          "edge_b_packets": edge_b["packets"],
+                          "edge_b_bytes": edge_b["bytes"],
+                          "latency_seconds": latency_seconds,
+                      },
+                  })
+
+              return correlations
+
+          @app.post("/correlation/collect")
+          def collect_correlation():
+              metrics = {
+                  "timestamp": datetime.utcnow().isoformat() + "Z",
+                  "latency": measure_latency(),
+                  "edges": collect_edge_metrics(),
+              }
+
+              ebpf_events = _load_ebpf_events(limit=1000)
+              correlations = _build_correlation(metrics, ebpf_events)
+
+              state = {
+                  "status": "ok",
+                  "timestamp": datetime.utcnow().isoformat() + "Z",
+                  "ebpf_event_count": len(ebpf_events),
+                  "correlations": correlations,
+              }
+
+              CORRELATION_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
+
+              return state
+
+          @app.get("/correlation/current")
+          def current_correlation():
+              if not CORRELATION_FILE.exists():
+                  return {
+                      "status": "empty",
+                      "message": "No correlation has been collected yet.",
+                  }
+
+              return json.loads(CORRELATION_FILE.read_text(encoding="utf-8"))

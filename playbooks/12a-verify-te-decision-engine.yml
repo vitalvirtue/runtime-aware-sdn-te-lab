@@ -1,0 +1,51 @@
+- name: Verify TE decision engine baseline
+  hosts: control
+  gather_facts: false
+
+  tasks:
+    - name: Check TE metrics collector health
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8090/health
+        method: GET
+        return_content: true
+      register: metrics_health
+
+    - name: Check TE decision engine health
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8091/health
+        method: GET
+        return_content: true
+      register: decision_health
+
+    - name: Evaluate TE decision
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8091/decision/evaluate
+        method: POST
+        return_content: true
+      register: decision_eval
+
+    - name: Parse decision
+      ansible.builtin.set_fact:
+        decision_json: "{{ decision_eval.content | from_json }}"
+
+    - name: Show decision output
+      ansible.builtin.debug:
+        var: decision_json
+
+    - name: Assert decision engine baseline
+      ansible.builtin.assert:
+        that:
+          - decision_json.status == "ok"
+          - decision_json.decision.mode == "dry-run"
+          - decision_json.decision.observed.critical_api_to_db_avg_seconds | float > 0
+          - decision_json.decision.observed.bulk_to_api_avg_seconds | float > 0
+          - decision_json.decision.action in ["keep_current_paths", "recommend_shift_critical_to_path2", "keep_current_paths_with_warning", "insufficient_metrics"]
+        success_msg: "TE_DECISION_ENGINE_BASELINE_PASS"
+        fail_msg: "TE decision engine baseline failed."
+
+    - name: Assert current expected decision
+      ansible.builtin.assert:
+        that:
+          - decision_json.decision.action == "keep_current_paths"
+        success_msg: "TE_DECISION_KEEP_CURRENT_PATHS_PASS"
+        fail_msg: "Unexpected TE decision for current path-cost setup."

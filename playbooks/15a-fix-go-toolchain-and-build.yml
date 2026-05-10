@@ -1,0 +1,125 @@
+- name: Fix Go toolchain and rebuild native Go eBPF canary
+  hosts: workloads
+  become: true
+  gather_facts: false
+
+  vars:
+    go_version: "1.22.12"
+    go_tarball: "go1.22.12.linux-amd64.tar.gz"
+    go_url: "https://go.dev/dl/go1.22.12.linux-amd64.tar.gz"
+
+  tasks:
+    - name: Install Go toolchain install dependencies
+      ansible.builtin.apt:
+        name:
+          - curl
+          - ca-certificates
+          - tar
+          - jq
+        state: present
+        update_cache: true
+
+    - name: Install official Go toolchain under /usr/local/go
+      ansible.builtin.shell: |
+        set -euo pipefail
+
+        NEED_INSTALL="yes"
+
+        if [ -x /usr/local/go/bin/go ]; then
+          if /usr/local/go/bin/go version | grep -q "go{{ go_version }}"; then
+            NEED_INSTALL="no"
+          fi
+        fi
+
+        if [ "$NEED_INSTALL" = "yes" ]; then
+          rm -rf /usr/local/go
+          curl -fsSL "{{ go_url }}" -o "/tmp/{{ go_tarball }}"
+          tar -C /usr/local -xzf "/tmp/{{ go_tarball }}"
+        fi
+
+        ln -sf /usr/local/go/bin/go /usr/local/bin/go
+        ln -sf /usr/local/go/bin/gofmt /usr/local/bin/gofmt
+
+        echo "PATH=$PATH"
+        /usr/local/go/bin/go version
+        /usr/local/bin/go version
+        go version
+      args:
+        executable: /bin/bash
+      register: go_install
+
+    - name: Show Go version
+      ansible.builtin.debug:
+        var: go_install.stdout_lines
+
+    - name: Patch native eBPF go.mod for modern Go
+      ansible.builtin.copy:
+        dest: /opt/sdn-lab/ebpf/native-agent/go.mod
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          module sdn-ebpf-native-agent
+
+          go 1.22
+
+          require github.com/cilium/ebpf v0.12.3
+
+    - name: Rebuild native Go eBPF canary with official Go
+      ansible.builtin.shell: |
+        set -euo pipefail
+
+        export PATH="/usr/local/go/bin:/usr/local/bin:$PATH"
+
+        echo "using_go=$(go version)"
+        echo "using_go_path=$(command -v go)"
+
+        cd /opt/sdn-lab/ebpf/native-agent
+        go mod tidy
+
+        cd /opt/sdn-lab/ebpf/native-agent/cmd/sdn-ebpf-native-agent
+
+        rm -f bpf_bpfel.go bpf_bpfeb.go bpf_bpfel.o bpf_bpfeb.o
+
+        go generate
+        go build -o /opt/sdn-lab/ebpf/native-agent/sdn-ebpf-native-agent .
+
+        test -x /opt/sdn-lab/ebpf/native-agent/sdn-ebpf-native-agent
+
+        echo "NATIVE_GO_EBPF_CANARY_BUILD_PASS"
+      args:
+        executable: /bin/bash
+      register: native_rebuild
+
+    - name: Show native rebuild result
+      ansible.builtin.debug:
+        var: native_rebuild.stdout_lines
+
+    - name: Create native eBPF canary systemd service
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/sdn-ebpf-native-agent.service
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=SDN Lab Native Go eBPF Agent Canary
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=simple
+          User=root
+          Group=root
+          ExecStart=/opt/sdn-lab/ebpf/native-agent/sdn-ebpf-native-agent --config /etc/sdn-ebpf-agent/config.json --oneshot --timeout 30s
+          Restart=no
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Keep native eBPF canary disabled by default
+      ansible.builtin.systemd:
+        name: sdn-ebpf-native-agent
+        daemon_reload: true
+        enabled: false
+        state: stopped

@@ -1,0 +1,18 @@
+- name: Install Docker packages
+  ansible.builtin.apt:
+    name:
+      - docker.io
+      - python3-docker
+    state: present
+
+- name: Enable Docker
+  ansible.builtin.service:
+    name: docker
+    enabled: true
+    state: started
+
+- name: Add automation user to docker group
+  ansible.builtin.user:
+    name: automation
+    groups: docker
+    append: true

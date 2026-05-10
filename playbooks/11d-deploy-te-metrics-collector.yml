@@ -1,0 +1,317 @@
+- name: Deploy TE metrics collector on controller node
+  hosts: control
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Install TE metrics collector dependencies
+      ansible.builtin.apt:
+        name:
+          - python3
+          - python3-venv
+          - python3-pip
+          - curl
+          - jq
+          - openssh-client
+        state: present
+        update_cache: true
+
+    - name: Create TE metrics collector directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: automation
+        group: automation
+        mode: "0755"
+      loop:
+        - /opt/sdn-lab/te-metrics
+        - /opt/sdn-lab/te-metrics/state
+
+    - name: Create TE metrics collector app
+      ansible.builtin.copy:
+        dest: /opt/sdn-lab/te-metrics/app.py
+        owner: automation
+        group: automation
+        mode: "0644"
+        content: |
+          import json
+          import re
+          import subprocess
+          import time
+          from datetime import datetime
+          from pathlib import Path
+          from typing import Dict, List
+
+          from fastapi import FastAPI
+
+          app = FastAPI(title="SDN Lab TE Metrics Collector")
+
+          STATE_FILE = Path("/opt/sdn-lab/te-metrics/state/current_metrics.json")
+
+          EDGE_NODES = {
+              "edge-a": "10.60.10.21",
+              "edge-b": "10.60.10.22",
+          }
+
+          WORKLOAD_NODES = {
+              "api": "10.60.10.32",
+              "bulk": "10.60.10.34",
+          }
+
+          def run_cmd(cmd: List[str], timeout: int = 10) -> Dict:
+              try:
+                  result = subprocess.run(
+                      cmd,
+                      stdout=subprocess.PIPE,
+                      stderr=subprocess.PIPE,
+                      text=True,
+                      timeout=timeout,
+                      check=False,
+                  )
+                  return {
+                      "rc": result.returncode,
+                      "stdout": result.stdout,
+                      "stderr": result.stderr,
+                  }
+              except Exception as e:
+                  return {
+                      "rc": -1,
+                      "stdout": "",
+                      "stderr": str(e),
+                  }
+
+          def ssh(host: str, command: str, timeout: int = 10) -> Dict:
+              return run_cmd(
+                  [
+                      "ssh",
+                      "-o", "StrictHostKeyChecking=no",
+                      "-o", "BatchMode=yes",
+                      f"automation@{host}",
+                      command,
+                  ],
+                  timeout=timeout,
+              )
+
+          def parse_flows(raw: str) -> List[Dict]:
+              flows = []
+              for line in raw.splitlines():
+                  if "priority=" not in line:
+                      continue
+
+                  packets = 0
+                  bytes_ = 0
+
+                  m_packets = re.search(r"n_packets=(\\d+)", line)
+                  if m_packets:
+                      packets = int(m_packets.group(1))
+
+                  m_bytes = re.search(r"n_bytes=(\\d+)", line)
+                  if m_bytes:
+                      bytes_ = int(m_bytes.group(1))
+
+                  src = None
+                  dst = None
+
+                  m_src = re.search(r"nw_src=([0-9.]+)", line)
+                  if m_src:
+                      src = m_src.group(1)
+
+                  m_dst = re.search(r"nw_dst=([0-9.]+)", line)
+                  if m_dst:
+                      dst = m_dst.group(1)
+
+                  action = None
+                  m_action = re.search(r"actions=(.+)$", line)
+                  if m_action:
+                      action = m_action.group(1).strip()
+
+                  flows.append(
+                      {
+                          "src": src,
+                          "dst": dst,
+                          "packets": packets,
+                          "bytes": bytes_,
+                          "action": action,
+                          "raw": line.strip(),
+                      }
+                  )
+
+              return flows
+
+          def classify_flow(src: str, dst: str) -> str:
+              if src == "172.31.210.12" and dst == "172.31.210.13":
+                  return "critical_api_to_db"
+              if src == "172.31.210.14" and dst == "172.31.210.12":
+                  return "bulk_to_api"
+              if src == "172.31.210.11" and dst == "172.31.210.12":
+                  return "web_to_api"
+              if src == "172.31.210.11" and dst == "172.31.210.13":
+                  return "denied_web_to_db"
+              if src == "172.31.210.14" and dst == "172.31.210.13":
+                  return "denied_bulk_to_db"
+              return "other"
+
+          def collect_edge_metrics() -> Dict:
+              result = {}
+
+              for name, ip in EDGE_NODES.items():
+                  flow_cmd = "sudo ovs-ofctl -O OpenFlow13 dump-flows br-edge0"
+                  qdisc_cmd = (
+                      "for dev in path1-to-b path2-to-b path1-to-a path2-to-a; do "
+                      "if ip link show $dev >/dev/null 2>&1; then "
+                      "echo DEV=$dev; tc qdisc show dev $dev; fi; done"
+                  )
+
+                  flow_result = ssh(ip, flow_cmd)
+                  qdisc_result = ssh(ip, qdisc_cmd)
+
+                  flows = parse_flows(flow_result["stdout"])
+                  for flow in flows:
+                      flow["class"] = classify_flow(flow.get("src"), flow.get("dst"))
+
+                  result[name] = {
+                      "host": ip,
+                      "flows": flows,
+                      "qdisc_raw": qdisc_result["stdout"],
+                      "flow_command_rc": flow_result["rc"],
+                      "qdisc_command_rc": qdisc_result["rc"],
+                  }
+
+              return result
+
+          def measure_latency() -> Dict:
+              samples = {}
+
+              # Critical path sample: API -> DB
+              api_cmd = (
+                  "for i in $(seq 1 5); do "
+                  "curl -o /dev/null -s -w '%{time_total}\\n' "
+                  "http://172.31.210.13:15432/health; "
+                  "done"
+              )
+              api_result = ssh(WORKLOAD_NODES["api"], api_cmd, timeout=20)
+
+              # Bulk/default path sample: BULK -> API
+              bulk_cmd = (
+                  "for i in $(seq 1 5); do "
+                  "curl -o /dev/null -s -w '%{time_total}\\n' "
+                  "http://172.31.210.12:18080/health; "
+                  "done"
+              )
+              bulk_result = ssh(WORKLOAD_NODES["bulk"], bulk_cmd, timeout=20)
+
+              def avg(raw: str) -> float:
+                  values = []
+                  for line in raw.splitlines():
+                      try:
+                          values.append(float(line.strip()))
+                      except Exception:
+                          pass
+                  if not values:
+                      return 0.0
+                  return sum(values) / len(values)
+
+              samples["critical_api_to_db_avg_seconds"] = avg(api_result["stdout"])
+              samples["bulk_to_api_avg_seconds"] = avg(bulk_result["stdout"])
+              samples["critical_raw"] = api_result["stdout"]
+              samples["bulk_raw"] = bulk_result["stdout"]
+
+              return samples
+
+          @app.get("/health")
+          def health():
+              return {
+                  "status": "ok",
+                  "service": "te-metrics-collector",
+                  "timestamp": datetime.utcnow().isoformat() + "Z",
+              }
+
+          @app.post("/metrics/collect")
+          def collect_metrics():
+              metrics = {
+                  "timestamp": datetime.utcnow().isoformat() + "Z",
+                  "edges": collect_edge_metrics(),
+                  "latency": measure_latency(),
+              }
+
+              STATE_FILE.write_text(json.dumps(metrics, indent=2))
+              return {
+                  "status": "ok",
+                  "metrics": metrics,
+              }
+
+          @app.get("/metrics/current")
+          def current_metrics():
+              if not STATE_FILE.exists():
+                  return {
+                      "status": "empty",
+                      "message": "No metrics collected yet.",
+                  }
+
+              return {
+                  "status": "ok",
+                  "metrics": json.loads(STATE_FILE.read_text()),
+              }
+
+    - name: Create Python virtualenv for TE metrics collector
+      become_user: automation
+      ansible.builtin.command:
+        cmd: python3 -m venv /opt/sdn-lab/te-metrics/.venv
+        creates: /opt/sdn-lab/te-metrics/.venv/bin/python
+
+    - name: Install Python packages for TE metrics collector
+      become_user: automation
+      ansible.builtin.shell: |
+        set -e
+        /opt/sdn-lab/te-metrics/.venv/bin/pip install --upgrade pip
+        /opt/sdn-lab/te-metrics/.venv/bin/pip install fastapi uvicorn
+      args:
+        executable: /bin/bash
+
+    - name: Create TE metrics collector systemd service
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/sdn-te-metrics.service
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=SDN Lab TE Metrics Collector
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=simple
+          User=automation
+          Group=automation
+          WorkingDirectory=/opt/sdn-lab/te-metrics
+          ExecStart=/opt/sdn-lab/te-metrics/.venv/bin/uvicorn app:app --host 0.0.0.0 --port 8090
+          Restart=on-failure
+          RestartSec=3
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Enable and restart TE metrics collector
+      ansible.builtin.systemd:
+        name: sdn-te-metrics
+        daemon_reload: true
+        enabled: true
+        state: restarted
+
+    - name: Wait for TE metrics collector
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 8090
+        timeout: 30
+
+    - name: Check TE metrics collector health
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8090/health
+        method: GET
+        return_content: true
+      register: health
+
+    - name: Show health
+      ansible.builtin.debug:
+        var: health.content

@@ -1,0 +1,400 @@
+- name: Deploy Go eBPF agent stream canary
+  hosts: workloads
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Ensure Go stream agent dependencies
+      ansible.builtin.apt:
+        name:
+          - golang
+          - bpftrace
+          - jq
+          - curl
+        state: present
+        update_cache: true
+
+    - name: Ensure Go agent directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      loop:
+        - /opt/sdn-lab/ebpf/go-agent
+        - /opt/sdn-lab/ebpf/go-agent/cmd/sdn-ebpf-agent
+        - /opt/sdn-lab/ebpf/state
+        - /opt/sdn-lab/ebpf/events
+        - /opt/sdn-lab/ebpf/logs
+
+    - name: Create Go module
+      ansible.builtin.copy:
+        dest: /opt/sdn-lab/ebpf/go-agent/go.mod
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          module sdn-ebpf-agent
+
+          go 1.19
+
+    - name: Install Go bpftrace-stream agent
+      ansible.builtin.copy:
+        dest: /opt/sdn-lab/ebpf/go-agent/cmd/sdn-ebpf-agent/main.go
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          package main
+
+          import (
+            "bufio"
+            "bytes"
+            "encoding/json"
+            "flag"
+            "fmt"
+            "io"
+            "net/http"
+            "os"
+            "os/exec"
+            "path/filepath"
+            "regexp"
+            "strconv"
+            "strings"
+            "time"
+          )
+
+          type FlowRule struct {
+            Segment   string `json:"segment"`
+            DstIP     string `json:"dst_ip"`
+            DstPort   int    `json:"dst_port,omitempty"`
+            FlowClass string `json:"flow_class"`
+          }
+
+          type Config struct {
+            Version       string     `json:"version"`
+            Host          string     `json:"host"`
+            Segment       string     `json:"segment"`
+            Role          string     `json:"role"`
+            CollectorURL  string     `json:"collector_url"`
+            BpftraceScript string    `json:"bpftrace_script"`
+            LocalEventLog string     `json:"local_event_log"`
+            StateFile     string     `json:"state_file"`
+            OverlayPrefix string     `json:"overlay_prefix"`
+            FlowRules     []FlowRule `json:"flow_rules"`
+          }
+
+          type Event struct {
+            EventType          string `json:"event_type"`
+            Timestamp          string `json:"timestamp"`
+            Host               string `json:"host"`
+            Segment            string `json:"segment"`
+            PID                int    `json:"pid"`
+            Comm               string `json:"comm"`
+            DstIP              string `json:"dst_ip"`
+            DstPort            int    `json:"dst_port"`
+            FlowClass          string `json:"flow_class"`
+            Source             string `json:"source"`
+            AgentConfigVersion string `json:"agent_config_version"`
+          }
+
+          type State struct {
+            Status          string  `json:"status"`
+            UpdatedAt       string  `json:"updated_at"`
+            Host            string  `json:"host"`
+            Segment         string  `json:"segment"`
+            ConfigPath      string  `json:"config_path"`
+            CollectorURL    string  `json:"collector_url"`
+            EventCount      int     `json:"event_count"`
+            LastEvent       *Event  `json:"last_event"`
+            LastPostSuccess bool    `json:"last_post_success"`
+            LastError       *string `json:"last_error"`
+            Runtime         string  `json:"runtime"`
+          }
+
+          var lineRe = regexp.MustCompile(`TCP_CONNECT pid=(\d+) comm=(\S+) daddr=([0-9.]+) dport=(\d+)`)
+
+          func utcNow() string {
+            return time.Now().UTC().Format(time.RFC3339Nano)
+          }
+
+          func loadConfig(path string) (Config, error) {
+            raw, err := os.ReadFile(path)
+            if err != nil {
+              return Config{}, err
+            }
+
+            var cfg Config
+            if err := json.Unmarshal(raw, &cfg); err != nil {
+              return Config{}, err
+            }
+
+            if cfg.OverlayPrefix == "" {
+              cfg.OverlayPrefix = "172.31.210."
+            }
+
+            if cfg.BpftraceScript == "" {
+              cfg.BpftraceScript = "/opt/sdn-lab/ebpf/scripts/tcp-v4-connect-ip-port.bt"
+            }
+
+            return cfg, nil
+          }
+
+          func classifyFlow(cfg Config, dstIP string, dstPort int) string {
+            for _, rule := range cfg.FlowRules {
+              if rule.Segment != cfg.Segment {
+                continue
+              }
+              if rule.DstIP != dstIP {
+                continue
+              }
+              if rule.DstPort != 0 && rule.DstPort != dstPort {
+                continue
+              }
+              return rule.FlowClass
+            }
+            return "unknown"
+          }
+
+          func appendLocal(path string, event Event) error {
+            if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+              return err
+            }
+
+            f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+            if err != nil {
+              return err
+            }
+            defer f.Close()
+
+            raw, err := json.Marshal(event)
+            if err != nil {
+              return err
+            }
+
+            _, err = f.Write(append(raw, '\n'))
+            return err
+          }
+
+          func writeState(path string, state State) error {
+            if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+              return err
+            }
+
+            state.UpdatedAt = utcNow()
+
+            raw, err := json.MarshalIndent(state, "", "  ")
+            if err != nil {
+              return err
+            }
+
+            return os.WriteFile(path, raw, 0644)
+          }
+
+          func postEvent(url string, event Event) error {
+            raw, err := json.Marshal(event)
+            if err != nil {
+              return err
+            }
+
+            req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(raw))
+            if err != nil {
+              return err
+            }
+
+            req.Header.Set("Content-Type", "application/json")
+
+            client := http.Client{Timeout: 5 * time.Second}
+            resp, err := client.Do(req)
+            if err != nil {
+              return err
+            }
+            defer resp.Body.Close()
+
+            _, _ = io.ReadAll(resp.Body)
+
+            if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+              return fmt.Errorf("collector returned status %d", resp.StatusCode)
+            }
+
+            return nil
+          }
+
+          func runStream(configPath string) error {
+            cfg, err := loadConfig(configPath)
+            if err != nil {
+              return err
+            }
+
+            state := State{
+              Status:       "starting",
+              Host:         cfg.Host,
+              Segment:      cfg.Segment,
+              ConfigPath:   configPath,
+              CollectorURL: cfg.CollectorURL,
+              Runtime:      "go-bpftrace-stream-canary",
+            }
+
+            _ = writeState(cfg.StateFile, state)
+
+            fmt.Printf("SDN_GO_EBPF_STREAM_AGENT_START host=%s segment=%s collector=%s config=%s\n",
+              cfg.Host, cfg.Segment, cfg.CollectorURL, configPath)
+
+            cmd := exec.Command("bpftrace", cfg.BpftraceScript)
+            stdout, err := cmd.StdoutPipe()
+            if err != nil {
+              return err
+            }
+
+            cmd.Stderr = cmd.Stdout
+
+            if err := cmd.Start(); err != nil {
+              return err
+            }
+
+            state.Status = "running"
+            _ = writeState(cfg.StateFile, state)
+
+            scanner := bufio.NewScanner(stdout)
+            scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+
+            for scanner.Scan() {
+              line := scanner.Text()
+              fmt.Println(line)
+
+              m := lineRe.FindStringSubmatch(line)
+              if m == nil {
+                continue
+              }
+
+              pid, _ := strconv.Atoi(m[1])
+              comm := m[2]
+              dstIP := m[3]
+              dstPort, _ := strconv.Atoi(m[4])
+
+              if !strings.HasPrefix(dstIP, cfg.OverlayPrefix) {
+                continue
+              }
+
+              flowClass := classifyFlow(cfg, dstIP, dstPort)
+              if flowClass == "unknown" {
+                continue
+              }
+
+              event := Event{
+                EventType:          "tcp_connect",
+                Timestamp:          utcNow(),
+                Host:               cfg.Host,
+                Segment:            cfg.Segment,
+                PID:                pid,
+                Comm:               comm,
+                DstIP:              dstIP,
+                DstPort:            dstPort,
+                FlowClass:          flowClass,
+                Source:             "sdn-ebpf-go-agent:bpftrace-stream-v1:kprobe:tcp_v4_connect",
+                AgentConfigVersion: cfg.Version,
+              }
+
+              if err := appendLocal(cfg.LocalEventLog, event); err != nil {
+                msg := err.Error()
+                state.LastError = &msg
+                state.LastPostSuccess = false
+                _ = writeState(cfg.StateFile, state)
+                fmt.Printf("LOCAL_APPEND_FAILED error=%v\n", err)
+                continue
+              }
+
+              sent := true
+              if err := postEvent(cfg.CollectorURL, event); err != nil {
+                sent = false
+                msg := err.Error()
+                state.LastError = &msg
+                state.LastPostSuccess = false
+              } else {
+                state.LastError = nil
+                state.LastPostSuccess = true
+              }
+
+              state.EventCount++
+              state.LastEvent = &event
+              _ = writeState(cfg.StateFile, state)
+
+              out, _ := json.Marshal(map[string]any{
+                "sent": sent,
+                "host": cfg.Host,
+                "flow_class": flowClass,
+                "dst_ip": dstIP,
+                "dst_port": dstPort,
+              })
+
+              fmt.Println("SDN_GO_EBPF_STREAM_EVENT_SENT " + string(out))
+            }
+
+            if err := scanner.Err(); err != nil {
+              return err
+            }
+
+            return cmd.Wait()
+          }
+
+          func main() {
+            configPath := flag.String("config", "/etc/sdn-ebpf-agent/config.json", "agent config path")
+            flag.Parse()
+
+            for {
+              if err := runStream(*configPath); err != nil {
+                fmt.Printf("SDN_GO_EBPF_STREAM_AGENT_ERROR error=%v\n", err)
+              }
+              time.Sleep(3 * time.Second)
+            }
+          }
+
+    - name: Build Go stream agent
+      ansible.builtin.shell: |
+        set -euo pipefail
+        cd /opt/sdn-lab/ebpf/go-agent
+        go build -o /opt/sdn-lab/ebpf/go-agent/sdn-ebpf-agent ./cmd/sdn-ebpf-agent
+        /opt/sdn-lab/ebpf/go-agent/sdn-ebpf-agent --config /etc/sdn-ebpf-agent/config.json >/tmp/go-agent-ready.out 2>&1 &
+        PID=$!
+        sleep 2
+        kill "$PID" >/dev/null 2>&1 || true
+        cat /tmp/go-agent-ready.out || true
+      args:
+        executable: /bin/bash
+      register: go_build
+      changed_when: true
+
+    - name: Create Go stream canary systemd service
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/sdn-ebpf-go-agent.service
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=SDN Lab Go eBPF Agent Canary
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=simple
+          User=root
+          Group=root
+          ExecStart=/opt/sdn-lab/ebpf/go-agent/sdn-ebpf-agent --config /etc/sdn-ebpf-agent/config.json
+          Restart=always
+          RestartSec=3
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Keep Go stream canary disabled by default
+      ansible.builtin.systemd:
+        name: sdn-ebpf-go-agent
+        daemon_reload: true
+        enabled: false
+        state: stopped
+
+    - name: Show Go stream canary build output
+      ansible.builtin.debug:
+        var: go_build.stdout_lines

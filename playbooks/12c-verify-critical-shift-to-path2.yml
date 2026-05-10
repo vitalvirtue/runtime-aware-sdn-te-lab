@@ -1,0 +1,30 @@
+- name: Verify critical traffic shifted to path-2
+  hosts: control
+  gather_facts: false
+
+  tasks:
+    - name: Collect metrics after TE enforcement
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8090/metrics/collect
+        method: POST
+        return_content: true
+      register: collect
+
+    - name: Parse metrics
+      ansible.builtin.set_fact:
+        metrics: "{{ collect.content | from_json }}"
+
+    - name: Show latency after enforcement
+      ansible.builtin.debug:
+        msg:
+          critical_api_to_db_avg_seconds: "{{ metrics.metrics.latency.critical_api_to_db_avg_seconds }}"
+          bulk_to_api_avg_seconds: "{{ metrics.metrics.latency.bulk_to_api_avg_seconds }}"
+
+    - name: Assert shifted critical latency is improved
+      ansible.builtin.assert:
+        that:
+          - metrics.status == "ok"
+          - metrics.metrics.latency.critical_api_to_db_avg_seconds | float > 0
+          - metrics.metrics.latency.critical_api_to_db_avg_seconds | float < 1.0
+        success_msg: "TE_ENFORCEMENT_CRITICAL_SHIFT_PATH2_PASS"
+        fail_msg: "Critical traffic did not improve after shifting to path-2."

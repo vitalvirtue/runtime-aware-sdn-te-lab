@@ -1,0 +1,80 @@
+- name: Verify TE metrics collector
+  hosts: control
+  gather_facts: false
+
+  tasks:
+    - name: Check collector health
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8090/health
+        method: GET
+        return_content: true
+      register: health
+
+    - name: Collect TE metrics
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8090/metrics/collect
+        method: POST
+        return_content: true
+      register: collect
+
+    - name: Parse metrics
+      ansible.builtin.set_fact:
+        metrics: "{{ collect.content | from_json }}"
+
+    - name: Show latency metrics
+      ansible.builtin.debug:
+        msg:
+          critical_api_to_db_avg_seconds: "{{ metrics.metrics.latency.critical_api_to_db_avg_seconds }}"
+          bulk_to_api_avg_seconds: "{{ metrics.metrics.latency.bulk_to_api_avg_seconds }}"
+
+    - name: Assert latency metrics are valid
+      ansible.builtin.assert:
+        that:
+          - metrics.status == "ok"
+          - metrics.metrics.latency.critical_debug.rc == 0
+          - metrics.metrics.latency.bulk_debug.rc == 0
+          - metrics.metrics.latency.critical_api_to_db_avg_seconds | float > 0
+          - metrics.metrics.latency.bulk_to_api_avg_seconds | float > 0
+          - (metrics.metrics.latency.bulk_to_api_avg_seconds | float) > ((metrics.metrics.latency.critical_api_to_db_avg_seconds | float) + 0.10)
+        success_msg: "TE_METRICS_LATENCY_PASS"
+        fail_msg: "TE metrics latency validation failed."
+
+    - name: Get current metrics
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8090/metrics/current
+        method: GET
+        return_content: true
+      register: current
+
+    - name: Parse current metrics
+      ansible.builtin.set_fact:
+        current_metrics: "{{ current.content | from_json }}"
+
+    - name: Extract important flow counters
+      ansible.builtin.set_fact:
+        edge_a_critical: "{{ current_metrics.metrics.edges['edge-a'].flows | selectattr('class', 'equalto', 'critical_api_to_db') | list }}"
+        edge_b_critical: "{{ current_metrics.metrics.edges['edge-b'].flows | selectattr('class', 'equalto', 'critical_api_to_db') | list }}"
+        edge_a_bulk: "{{ current_metrics.metrics.edges['edge-a'].flows | selectattr('class', 'equalto', 'bulk_to_api') | list }}"
+        edge_b_bulk: "{{ current_metrics.metrics.edges['edge-b'].flows | selectattr('class', 'equalto', 'bulk_to_api') | list }}"
+
+    - name: Show selected flow counters
+      ansible.builtin.debug:
+        msg:
+          edge_a_critical: "{{ edge_a_critical }}"
+          edge_b_critical: "{{ edge_b_critical }}"
+          edge_a_bulk: "{{ edge_a_bulk }}"
+          edge_b_bulk: "{{ edge_b_bulk }}"
+
+    - name: Assert important flow counters exist
+      ansible.builtin.assert:
+        that:
+          - edge_a_critical | length > 0
+          - edge_b_critical | length > 0
+          - edge_a_bulk | length > 0
+          - edge_b_bulk | length > 0
+        success_msg: "TE_METRICS_FLOW_CLASSIFICATION_PASS"
+        fail_msg: "TE metrics flow classification validation failed."
+
+    - name: Mark collector baseline passed
+      ansible.builtin.debug:
+        msg: "TE_METRICS_COLLECTOR_BASELINE_PASS"

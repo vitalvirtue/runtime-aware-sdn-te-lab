@@ -1,0 +1,106 @@
+- name: Clear central eBPF event store
+  hosts: control
+  gather_facts: false
+
+  tasks:
+    - name: Clear eBPF events
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8090/ebpf/events
+        method: DELETE
+        return_content: true
+
+
+- name: Generate workload traffic for persistent eBPF agents
+  hosts: workloads
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Ensure eBPF agent service is active
+      ansible.builtin.shell: |
+        set -e
+        systemctl is-active sdn-ebpf-agent
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Generate traffic
+      ansible.builtin.shell: |
+        set -euo pipefail
+
+        HOST="$(hostname)"
+
+        case "$HOST" in
+          lab-sdn-app-web-01)
+            curl -fsS http://172.31.210.12:18080/health >/dev/null
+            ;;
+          lab-sdn-app-api-01)
+            curl -fsS http://172.31.210.13:15432/health >/dev/null
+            ;;
+          lab-sdn-data-db-01)
+            curl -fsS http://172.31.210.12:18080/health >/dev/null
+            ;;
+          lab-sdn-app-bulk-01)
+            curl -fsS http://172.31.210.12:18080/health >/dev/null
+            ;;
+        esac
+
+        sleep 1
+
+        journalctl -u sdn-ebpf-agent -n 20 --no-pager
+      args:
+        executable: /bin/bash
+      register: traffic_result
+      changed_when: true
+
+    - name: Show agent journal
+      ansible.builtin.debug:
+        var: traffic_result.stdout_lines
+
+
+- name: Verify eBPF agent health API
+  hosts: control
+  gather_facts: false
+
+  tasks:
+    - name: Wait until all agents report healthy
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8090/ebpf/agents/status?stale_after_seconds=120
+        method: GET
+        return_content: true
+      register: agent_status_response
+      until: >
+        ((agent_status_response.content | from_json).summary.healthy | int) >= 4
+      retries: 10
+      delay: 2
+
+    - name: Parse agent status
+      ansible.builtin.set_fact:
+        agent_status: "{{ agent_status_response.content | from_json }}"
+
+    - name: Show eBPF agent inventory status
+      ansible.builtin.debug:
+        msg:
+          summary: "{{ agent_status.summary }}"
+          agents: "{{ agent_status.agents }}"
+
+    - name: Assert eBPF agent health inventory
+      ansible.builtin.assert:
+        that:
+          - agent_status.status == "ok"
+          - agent_status.summary.total_agents | int >= 4
+          - agent_status.summary.healthy | int >= 4
+          - agent_status.agents['lab-sdn-app-web-01'].status == "healthy"
+          - agent_status.agents['lab-sdn-app-api-01'].status == "healthy"
+          - agent_status.agents['lab-sdn-data-db-01'].status == "healthy"
+          - agent_status.agents['lab-sdn-app-bulk-01'].status == "healthy"
+          - agent_status.agents['lab-sdn-app-web-01'].event_count | int >= 1
+          - agent_status.agents['lab-sdn-app-api-01'].event_count | int >= 1
+          - agent_status.agents['lab-sdn-data-db-01'].event_count | int >= 1
+          - agent_status.agents['lab-sdn-app-bulk-01'].event_count | int >= 1
+        success_msg: "EBPF_AGENT_HEALTH_API_PASS"
+        fail_msg: "eBPF agent health inventory validation failed."
+
+    - name: Mark milestone 14B passed
+      ansible.builtin.debug:
+        msg: "SDN_EBPF_AGENT_HEALTH_INVENTORY_PASS"

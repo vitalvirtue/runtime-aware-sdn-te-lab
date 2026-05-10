@@ -1,0 +1,32 @@
+- name: Pull pinned ONOS image
+  ansible.builtin.command: docker pull onosproject/onos:2.7.0
+  changed_when: true
+
+- name: Remove old ONOS container if exists
+  ansible.builtin.command: docker rm -f onos
+  ignore_errors: true
+  changed_when: true
+
+- name: Run pinned ONOS container
+  ansible.builtin.command: >
+    docker run -d --name onos
+    --restart unless-stopped
+    -p 8181:8181
+    -p 8101:8101
+    -p 6653:6653
+    -p 6640:6640
+    onosproject/onos:2.7.0
+  changed_when: true
+
+- name: Wait until ONOS REST API is reachable
+  ansible.builtin.uri:
+    url: http://127.0.0.1:8181/onos/v1/applications
+    user: onos
+    password: rocks
+    force_basic_auth: true
+    status_code: 200
+    return_content: false
+  register: onos_rest
+  retries: 30
+  delay: 5
+  until: onos_rest.status == 200

@@ -1,0 +1,308 @@
+- name: Grant limited sudo for TE actuator on edge nodes
+  hosts: edge
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Allow automation user to manage OVS flows without password
+      ansible.builtin.copy:
+        dest: /etc/sudoers.d/91-sdn-te-actuator
+        owner: root
+        group: root
+        mode: "0440"
+        content: |
+          automation ALL=(root) NOPASSWD: /usr/bin/ovs-ofctl, /usr/sbin/ovs-ofctl, /usr/bin/ovs-vsctl, /usr/sbin/ovs-vsctl
+
+
+- name: Deploy TE actuator API on controller node
+  hosts: control
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Install TE actuator dependencies
+      ansible.builtin.apt:
+        name:
+          - python3
+          - python3-venv
+          - python3-pip
+          - curl
+          - jq
+          - openssh-client
+        state: present
+        update_cache: true
+
+    - name: Create TE actuator directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: automation
+        group: automation
+        mode: "0755"
+      loop:
+        - /opt/sdn-lab/te-actuator
+        - /opt/sdn-lab/te-actuator/state
+
+    - name: Create TE actuator app
+      ansible.builtin.copy:
+        dest: /opt/sdn-lab/te-actuator/app.py
+        owner: automation
+        group: automation
+        mode: "0644"
+        content: |
+          import json
+          import shlex
+          import subprocess
+          from datetime import datetime
+          from pathlib import Path
+          from typing import Dict, List
+
+          from fastapi import FastAPI
+
+          app = FastAPI(title="SDN Lab TE Actuator API")
+
+          SSH_KEY = "/home/automation/.ssh/id_ed25519_te_metrics"
+          STATE_FILE = Path("/opt/sdn-lab/te-actuator/state/current_state.json")
+
+          EDGE_NODES = {
+              "edge-a": "10.60.10.21",
+              "edge-b": "10.60.10.22",
+          }
+
+          def run_cmd(cmd: List[str], timeout: int = 30) -> Dict:
+              try:
+                  result = subprocess.run(
+                      cmd,
+                      stdout=subprocess.PIPE,
+                      stderr=subprocess.PIPE,
+                      text=True,
+                      timeout=timeout,
+                      check=False,
+                  )
+                  return {
+                      "rc": result.returncode,
+                      "stdout": result.stdout,
+                      "stderr": result.stderr,
+                      "cmd": cmd,
+                  }
+              except Exception as e:
+                  return {
+                      "rc": -1,
+                      "stdout": "",
+                      "stderr": str(e),
+                      "cmd": cmd,
+                  }
+
+          def ssh(host: str, script: str, timeout: int = 30) -> Dict:
+              remote_cmd = "bash -lc " + shlex.quote(script)
+              return run_cmd(
+                  [
+                      "ssh",
+                      "-i", SSH_KEY,
+                      "-o", "StrictHostKeyChecking=no",
+                      "-o", "BatchMode=yes",
+                      f"automation@{host}",
+                      remote_cmd,
+                  ],
+                  timeout=timeout,
+              )
+
+          def edge_a_apply_path2_script() -> str:
+              return r'''
+          set -euo pipefail
+
+          BR="br-edge0"
+
+          API_PORT="$(sudo -n ovs-vsctl get Interface vx-api-te ofport)"
+          P2_PORT="$(sudo -n ovs-vsctl get Interface path2-to-b ofport)"
+
+          sudo -n ovs-ofctl -O OpenFlow13 del-flows "$BR" "ip,nw_src=172.31.210.12,nw_dst=172.31.210.13"
+          sudo -n ovs-ofctl -O OpenFlow13 add-flow "$BR" "priority=450,ip,nw_src=172.31.210.12,nw_dst=172.31.210.13,actions=output:${P2_PORT}"
+
+          sudo -n ovs-ofctl -O OpenFlow13 del-flows "$BR" "ip,nw_src=172.31.210.13,nw_dst=172.31.210.12"
+          sudo -n ovs-ofctl -O OpenFlow13 add-flow "$BR" "priority=450,ip,nw_src=172.31.210.13,nw_dst=172.31.210.12,actions=output:${API_PORT}"
+
+          echo "EDGE_A_ACTUATOR_SHIFTED_CRITICAL_TO_PATH2 api_port=${API_PORT} path2=${P2_PORT}"
+          sudo -n ovs-ofctl -O OpenFlow13 dump-flows "$BR" | egrep '172.31.210.12|172.31.210.13|priority=0' || true
+          '''
+
+          def edge_b_apply_path2_script() -> str:
+              return r'''
+          set -euo pipefail
+
+          BR="br-edge0"
+
+          DB_PORT="$(sudo -n ovs-vsctl get Interface vx-db-te ofport)"
+          P2_PORT="$(sudo -n ovs-vsctl get Interface path2-to-a ofport)"
+
+          sudo -n ovs-ofctl -O OpenFlow13 del-flows "$BR" "ip,nw_src=172.31.210.12,nw_dst=172.31.210.13"
+          sudo -n ovs-ofctl -O OpenFlow13 add-flow "$BR" "priority=450,ip,nw_src=172.31.210.12,nw_dst=172.31.210.13,actions=output:${DB_PORT}"
+
+          sudo -n ovs-ofctl -O OpenFlow13 del-flows "$BR" "ip,nw_src=172.31.210.13,nw_dst=172.31.210.12"
+          sudo -n ovs-ofctl -O OpenFlow13 add-flow "$BR" "priority=450,ip,nw_src=172.31.210.13,nw_dst=172.31.210.12,actions=output:${P2_PORT}"
+
+          echo "EDGE_B_ACTUATOR_SHIFTED_CRITICAL_TO_PATH2 db_port=${DB_PORT} path2=${P2_PORT}"
+          sudo -n ovs-ofctl -O OpenFlow13 dump-flows "$BR" | egrep '172.31.210.12|172.31.210.13|priority=0' || true
+          '''
+
+          def edge_a_restore_path1_script() -> str:
+              return r'''
+          set -euo pipefail
+
+          BR="br-edge0"
+
+          API_PORT="$(sudo -n ovs-vsctl get Interface vx-api-te ofport)"
+          P1_PORT="$(sudo -n ovs-vsctl get Interface path1-to-b ofport)"
+
+          sudo -n ovs-ofctl -O OpenFlow13 del-flows "$BR" "ip,nw_src=172.31.210.12,nw_dst=172.31.210.13"
+          sudo -n ovs-ofctl -O OpenFlow13 add-flow "$BR" "priority=400,ip,nw_src=172.31.210.12,nw_dst=172.31.210.13,actions=output:${P1_PORT}"
+
+          sudo -n ovs-ofctl -O OpenFlow13 del-flows "$BR" "ip,nw_src=172.31.210.13,nw_dst=172.31.210.12"
+          sudo -n ovs-ofctl -O OpenFlow13 add-flow "$BR" "priority=400,ip,nw_src=172.31.210.13,nw_dst=172.31.210.12,actions=output:${API_PORT}"
+
+          echo "EDGE_A_ACTUATOR_RESTORED_CRITICAL_TO_PATH1 api_port=${API_PORT} path1=${P1_PORT}"
+          sudo -n ovs-ofctl -O OpenFlow13 dump-flows "$BR" | egrep '172.31.210.12|172.31.210.13|priority=0' || true
+          '''
+
+          def edge_b_restore_path1_script() -> str:
+              return r'''
+          set -euo pipefail
+
+          BR="br-edge0"
+
+          DB_PORT="$(sudo -n ovs-vsctl get Interface vx-db-te ofport)"
+          P1_PORT="$(sudo -n ovs-vsctl get Interface path1-to-a ofport)"
+
+          sudo -n ovs-ofctl -O OpenFlow13 del-flows "$BR" "ip,nw_src=172.31.210.12,nw_dst=172.31.210.13"
+          sudo -n ovs-ofctl -O OpenFlow13 add-flow "$BR" "priority=400,ip,nw_src=172.31.210.12,nw_dst=172.31.210.13,actions=output:${DB_PORT}"
+
+          sudo -n ovs-ofctl -O OpenFlow13 del-flows "$BR" "ip,nw_src=172.31.210.13,nw_dst=172.31.210.12"
+          sudo -n ovs-ofctl -O OpenFlow13 add-flow "$BR" "priority=400,ip,nw_src=172.31.210.13,nw_dst=172.31.210.12,actions=output:${P1_PORT}"
+
+          echo "EDGE_B_ACTUATOR_RESTORED_CRITICAL_TO_PATH1 db_port=${DB_PORT} path1=${P1_PORT}"
+          sudo -n ovs-ofctl -O OpenFlow13 dump-flows "$BR" | egrep '172.31.210.12|172.31.210.13|priority=0' || true
+          '''
+
+          def write_state(action: str, result: Dict):
+              state = {
+                  "timestamp": datetime.utcnow().isoformat() + "Z",
+                  "action": action,
+                  "result": result,
+              }
+              STATE_FILE.write_text(json.dumps(state, indent=2))
+              return state
+
+          @app.get("/health")
+          def health():
+              return {
+                  "status": "ok",
+                  "service": "te-actuator",
+                  "ssh_key": SSH_KEY,
+                  "timestamp": datetime.utcnow().isoformat() + "Z",
+              }
+
+          @app.post("/actuator/apply-critical-path2")
+          def apply_critical_path2():
+              result = {
+                  "edge-a": ssh(EDGE_NODES["edge-a"], edge_a_apply_path2_script()),
+                  "edge-b": ssh(EDGE_NODES["edge-b"], edge_b_apply_path2_script()),
+              }
+
+              status = "ok" if all(v["rc"] == 0 for v in result.values()) else "error"
+              state = write_state("apply-critical-path2", result)
+
+              return {
+                  "status": status,
+                  "state": state,
+              }
+
+          @app.post("/actuator/restore-critical-path1")
+          def restore_critical_path1():
+              result = {
+                  "edge-a": ssh(EDGE_NODES["edge-a"], edge_a_restore_path1_script()),
+                  "edge-b": ssh(EDGE_NODES["edge-b"], edge_b_restore_path1_script()),
+              }
+
+              status = "ok" if all(v["rc"] == 0 for v in result.values()) else "error"
+              state = write_state("restore-critical-path1", result)
+
+              return {
+                  "status": status,
+                  "state": state,
+              }
+
+          @app.get("/actuator/state")
+          def actuator_state():
+              if not STATE_FILE.exists():
+                  return {
+                      "status": "empty",
+                      "message": "No actuator action has been applied yet.",
+                  }
+
+              return {
+                  "status": "ok",
+                  "state": json.loads(STATE_FILE.read_text()),
+              }
+
+    - name: Create Python virtualenv for TE actuator
+      become_user: automation
+      ansible.builtin.command:
+        cmd: python3 -m venv /opt/sdn-lab/te-actuator/.venv
+        creates: /opt/sdn-lab/te-actuator/.venv/bin/python
+
+    - name: Install Python packages for TE actuator
+      become_user: automation
+      ansible.builtin.shell: |
+        set -e
+        /opt/sdn-lab/te-actuator/.venv/bin/pip install --upgrade pip
+        /opt/sdn-lab/te-actuator/.venv/bin/pip install fastapi uvicorn
+      args:
+        executable: /bin/bash
+
+    - name: Create TE actuator systemd service
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/sdn-te-actuator.service
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=SDN Lab TE Actuator API
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=simple
+          User=automation
+          Group=automation
+          WorkingDirectory=/opt/sdn-lab/te-actuator
+          ExecStart=/opt/sdn-lab/te-actuator/.venv/bin/uvicorn app:app --host 0.0.0.0 --port 8092
+          Restart=on-failure
+          RestartSec=3
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Enable and restart TE actuator
+      ansible.builtin.systemd:
+        name: sdn-te-actuator
+        daemon_reload: true
+        enabled: true
+        state: restarted
+
+    - name: Wait for TE actuator
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 8092
+        timeout: 30
+
+    - name: Check TE actuator health
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8092/health
+        method: GET
+        return_content: true
+      register: health
+
+    - name: Show TE actuator health
+      ansible.builtin.debug:
+        var: health.content

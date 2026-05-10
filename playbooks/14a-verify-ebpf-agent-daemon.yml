@@ -1,0 +1,111 @@
+- name: Clear central eBPF event store
+  hosts: control
+  gather_facts: false
+
+  tasks:
+    - name: Clear eBPF events
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8090/ebpf/events
+        method: DELETE
+        return_content: true
+
+
+- name: Verify eBPF agent service and generate traffic
+  hosts: workloads
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Ensure eBPF agent is active
+      ansible.builtin.shell: |
+        set -e
+        systemctl is-active sdn-ebpf-agent
+      args:
+        executable: /bin/bash
+      register: active_check
+      changed_when: false
+
+    - name: Generate workload traffic for persistent agent
+      ansible.builtin.shell: |
+        set -euo pipefail
+
+        HOST="$(hostname)"
+
+        case "$HOST" in
+          lab-sdn-app-web-01)
+            curl -fsS http://172.31.210.12:18080/health >/dev/null
+            ;;
+          lab-sdn-app-api-01)
+            curl -fsS http://172.31.210.13:15432/health >/dev/null
+            ;;
+          lab-sdn-data-db-01)
+            curl -fsS http://172.31.210.12:18080/health >/dev/null
+            ;;
+          lab-sdn-app-bulk-01)
+            curl -fsS http://172.31.210.12:18080/health >/dev/null
+            ;;
+        esac
+
+        sleep 1
+
+        journalctl -u sdn-ebpf-agent -n 30 --no-pager
+      args:
+        executable: /bin/bash
+      register: traffic_result
+      changed_when: true
+
+    - name: Show agent traffic result
+      ansible.builtin.debug:
+        var: traffic_result.stdout_lines
+
+
+- name: Verify persistent eBPF agent telemetry in collector
+  hosts: control
+  gather_facts: false
+
+  tasks:
+    - name: Wait for eBPF events to arrive
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8090/ebpf/events/current?limit=100
+        method: GET
+        return_content: true
+      register: current_events
+      until: >
+        ((current_events.content | from_json).count | int) >= 4
+      retries: 10
+      delay: 2
+
+    - name: Parse eBPF events
+      ansible.builtin.set_fact:
+        ebpf_state: "{{ current_events.content | from_json }}"
+
+    - name: Extract flow classes and sources
+      ansible.builtin.set_fact:
+        ebpf_flow_classes: "{{ ebpf_state.events | map(attribute='flow_class') | list }}"
+        ebpf_sources: "{{ ebpf_state.events | map(attribute='source') | list }}"
+        ebpf_hosts: "{{ ebpf_state.events | map(attribute='host') | list }}"
+
+    - name: Show persistent agent telemetry summary
+      ansible.builtin.debug:
+        msg:
+          count: "{{ ebpf_state.count }}"
+          flow_classes: "{{ ebpf_flow_classes }}"
+          sources: "{{ ebpf_sources }}"
+          hosts: "{{ ebpf_hosts }}"
+
+    - name: Assert persistent eBPF agent telemetry
+      ansible.builtin.assert:
+        that:
+          - ebpf_state.status == "ok"
+          - ebpf_state.count | int >= 4
+          - "'web_to_api' in ebpf_flow_classes"
+          - "'critical_api_to_db' in ebpf_flow_classes"
+          - "'db_to_api' in ebpf_flow_classes"
+          - "'bulk_to_api' in ebpf_flow_classes"
+          - "'sdn-ebpf-agent:bpftrace:kprobe:tcp_v4_connect' in ebpf_sources"
+        success_msg: "EBPF_AGENT_DAEMON_BASELINE_PASS"
+        fail_msg: "Persistent eBPF agent telemetry validation failed."
+
+    - name: Mark milestone 14A passed
+      ansible.builtin.debug:
+        msg: "SDN_EBPF_AGENT_DAEMON_PASS"

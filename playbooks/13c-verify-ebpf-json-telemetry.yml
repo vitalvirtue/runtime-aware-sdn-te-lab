@@ -1,0 +1,56 @@
+- name: Verify eBPF JSON telemetry events on workload nodes
+  hosts: workloads
+  become: true
+  gather_facts: false
+
+  vars:
+    expected_flow_class:
+      lab-sdn-app-web-01: "web_to_api"
+      lab-sdn-app-api-01: "critical_api_to_db"
+      lab-sdn-data-db-01: "db_to_api"
+      lab-sdn-app-bulk-01: "bulk_to_api"
+
+  tasks:
+    - name: Run eBPF JSON telemetry smoke
+      ansible.builtin.shell: |
+        set -e
+        /opt/sdn-lab/ebpf/run-json-telemetry-smoke.sh
+      args:
+        executable: /bin/bash
+      register: json_telemetry
+      failed_when: >
+        'JSON_EVENTS_WRITTEN count=' not in json_telemetry.stdout or
+        expected_flow_class[inventory_hostname] not in json_telemetry.stdout
+
+    - name: Show JSON telemetry output
+      ansible.builtin.debug:
+        var: json_telemetry.stdout_lines
+
+    - name: Validate JSONL file with jq
+      ansible.builtin.shell: |
+        set -euo pipefail
+
+        EVENTS="/opt/sdn-lab/ebpf/events/tcp-connect-events.jsonl"
+        EXPECTED="{{ expected_flow_class[inventory_hostname] }}"
+
+        test -s "$EVENTS"
+
+        jq -e --arg expected "$EXPECTED" '
+          select(.event_type=="tcp_connect")
+          | select(.flow_class==$expected)
+          | select(.dst_ip | startswith("172.31.210."))
+          | select(.dst_port > 0)
+        ' "$EVENTS" >/dev/null
+
+        echo "EBPF_JSON_TELEMETRY_VALIDATE_PASS expected=${EXPECTED}"
+      args:
+        executable: /bin/bash
+      register: jq_validate
+
+    - name: Show jq validation
+      ansible.builtin.debug:
+        var: jq_validate.stdout_lines
+
+    - name: Mark eBPF JSON telemetry passed
+      ansible.builtin.debug:
+        msg: "EBPF_JSON_TELEMETRY_SMOKE_PASS {{ inventory_hostname }}"

@@ -1,0 +1,197 @@
+- name: Add eBPF agent health and inventory API
+  hosts: control
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Add agent health endpoints to TE metrics collector app
+      ansible.builtin.blockinfile:
+        path: /opt/sdn-lab/te-metrics/app.py
+        marker: "# {mark} ANSIBLE MANAGED BLOCK - eBPF agent health endpoints"
+        insertafter: EOF
+        block: |
+          # --- eBPF agent health / inventory endpoints ---
+
+          from datetime import timezone
+
+          EXPECTED_EBPF_AGENTS = {
+              "lab-sdn-app-web-01": {
+                  "segment": "web",
+                  "role": "web workload",
+                  "mgmt_ip": "10.60.10.31",
+                  "lab_ip": "10.60.20.31",
+              },
+              "lab-sdn-app-api-01": {
+                  "segment": "api",
+                  "role": "api workload",
+                  "mgmt_ip": "10.60.10.32",
+                  "lab_ip": "10.60.20.32",
+              },
+              "lab-sdn-data-db-01": {
+                  "segment": "db",
+                  "role": "database workload",
+                  "mgmt_ip": "10.60.10.33",
+                  "lab_ip": "10.60.20.33",
+              },
+              "lab-sdn-app-bulk-01": {
+                  "segment": "bulk",
+                  "role": "bulk traffic workload",
+                  "mgmt_ip": "10.60.10.34",
+                  "lab_ip": "10.60.20.34",
+              },
+          }
+
+          def _parse_event_time(value):
+              if not value:
+                  return None
+
+              try:
+                  return datetime.fromisoformat(value.replace("Z", "+00:00"))
+              except Exception:
+                  return None
+
+          def _load_all_ebpf_events():
+              if not EBPF_EVENTS_FILE.exists():
+                  return []
+
+              events = []
+
+              for line in EBPF_EVENTS_FILE.read_text(
+                  encoding="utf-8",
+                  errors="ignore",
+              ).splitlines():
+                  line = line.strip()
+
+                  if not line:
+                      continue
+
+                  try:
+                      item = json.loads(line)
+                      if isinstance(item, dict):
+                          events.append(item)
+                  except Exception:
+                      pass
+
+              return events
+
+          @app.get("/ebpf/agents/status")
+          def ebpf_agents_status(stale_after_seconds: int = 120):
+              now = datetime.now(timezone.utc)
+
+              events = _load_all_ebpf_events()
+
+              agents = {}
+
+              for host, meta in EXPECTED_EBPF_AGENTS.items():
+                  agents[host] = {
+                      "host": host,
+                      "segment": meta["segment"],
+                      "role": meta["role"],
+                      "mgmt_ip": meta["mgmt_ip"],
+                      "lab_ip": meta["lab_ip"],
+                      "status": "missing",
+                      "event_count": 0,
+                      "last_seen": None,
+                      "last_seen_age_seconds": None,
+                      "flow_classes": [],
+                      "sources": [],
+                  }
+
+              for event in events:
+                  host = event.get("host")
+
+                  if not host:
+                      continue
+
+                  if host not in agents:
+                      agents[host] = {
+                          "host": host,
+                          "segment": event.get("segment", "unknown"),
+                          "role": "unknown",
+                          "mgmt_ip": None,
+                          "lab_ip": None,
+                          "status": "unknown",
+                          "event_count": 0,
+                          "last_seen": None,
+                          "last_seen_age_seconds": None,
+                          "flow_classes": [],
+                          "sources": [],
+                      }
+
+                  agent = agents[host]
+
+                  agent["event_count"] += 1
+
+                  flow_class = event.get("flow_class")
+                  if flow_class and flow_class not in agent["flow_classes"]:
+                      agent["flow_classes"].append(flow_class)
+
+                  source = event.get("source")
+                  if source and source not in agent["sources"]:
+                      agent["sources"].append(source)
+
+                  event_time_raw = event.get("collector_received_at") or event.get("timestamp")
+                  event_time = _parse_event_time(event_time_raw)
+
+                  if event_time:
+                      current_last_seen = _parse_event_time(agent["last_seen"])
+
+                      if current_last_seen is None or event_time > current_last_seen:
+                          agent["last_seen"] = event_time_raw
+
+              healthy_count = 0
+              stale_count = 0
+              missing_count = 0
+
+              for agent in agents.values():
+                  last_seen_dt = _parse_event_time(agent["last_seen"])
+
+                  if last_seen_dt is None:
+                      agent["status"] = "missing"
+                      missing_count += 1
+                      continue
+
+                  age = int((now - last_seen_dt).total_seconds())
+                  agent["last_seen_age_seconds"] = age
+
+                  if age <= stale_after_seconds:
+                      agent["status"] = "healthy"
+                      healthy_count += 1
+                  else:
+                      agent["status"] = "stale"
+                      stale_count += 1
+
+              return {
+                  "status": "ok",
+                  "timestamp": datetime.utcnow().isoformat() + "Z",
+                  "stale_after_seconds": stale_after_seconds,
+                  "summary": {
+                      "total_agents": len(agents),
+                      "healthy": healthy_count,
+                      "stale": stale_count,
+                      "missing": missing_count,
+                  },
+                  "agents": agents,
+              }
+
+    - name: Restart TE metrics collector
+      ansible.builtin.systemd:
+        name: sdn-te-metrics
+        state: restarted
+
+    - name: Wait for collector
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 8090
+        timeout: 30
+
+    - name: Check collector health
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8090/health
+        method: GET
+        return_content: true
+      register: health
+
+    - name: Show collector health
+      ansible.builtin.debug:
+        var: health.content

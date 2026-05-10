@@ -1,0 +1,318 @@
+- name: Deploy Go eBPF agent skeleton on workload nodes
+  hosts: workloads
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Install Go dependencies
+      ansible.builtin.apt:
+        name:
+          - golang
+          - jq
+          - curl
+        state: present
+        update_cache: true
+
+    - name: Create Go agent directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      loop:
+        - /opt/sdn-lab/ebpf/go-agent
+        - /opt/sdn-lab/ebpf/go-agent/cmd/sdn-ebpf-agent
+        - /opt/sdn-lab/ebpf/state
+        - /opt/sdn-lab/ebpf/events
+
+    - name: Create Go module
+      ansible.builtin.copy:
+        dest: /opt/sdn-lab/ebpf/go-agent/go.mod
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          module sdn-ebpf-agent
+
+          go 1.19
+
+    - name: Create Go agent skeleton
+      ansible.builtin.copy:
+        dest: /opt/sdn-lab/ebpf/go-agent/cmd/sdn-ebpf-agent/main.go
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          package main
+
+          import (
+            "bytes"
+            "encoding/json"
+            "flag"
+            "fmt"
+            "io"
+            "net/http"
+            "os"
+            "path/filepath"
+            "time"
+          )
+
+          type FlowRule struct {
+            Segment   string `json:"segment"`
+            DstIP     string `json:"dst_ip"`
+            DstPort   int    `json:"dst_port,omitempty"`
+            FlowClass string `json:"flow_class"`
+          }
+
+          type Config struct {
+            Version       string     `json:"version"`
+            Host          string     `json:"host"`
+            Segment       string     `json:"segment"`
+            Role          string     `json:"role"`
+            CollectorURL  string     `json:"collector_url"`
+            LocalEventLog string     `json:"local_event_log"`
+            StateFile     string     `json:"state_file"`
+            OverlayPrefix string     `json:"overlay_prefix"`
+            Source        string     `json:"source"`
+            FlowRules     []FlowRule `json:"flow_rules"`
+          }
+
+          type Event struct {
+            EventType          string `json:"event_type"`
+            Timestamp          string `json:"timestamp"`
+            Host               string `json:"host"`
+            Segment            string `json:"segment"`
+            PID                int    `json:"pid"`
+            Comm               string `json:"comm"`
+            DstIP              string `json:"dst_ip"`
+            DstPort            int    `json:"dst_port"`
+            FlowClass          string `json:"flow_class"`
+            Source             string `json:"source"`
+            AgentConfigVersion string `json:"agent_config_version"`
+          }
+
+          type State struct {
+            Status          string  `json:"status"`
+            UpdatedAt       string  `json:"updated_at"`
+            Host            string  `json:"host"`
+            Segment         string  `json:"segment"`
+            ConfigPath      string  `json:"config_path"`
+            CollectorURL    string  `json:"collector_url"`
+            EventCount      int     `json:"event_count"`
+            LastEvent       *Event  `json:"last_event"`
+            LastPostSuccess bool    `json:"last_post_success"`
+            LastError       *string `json:"last_error"`
+            Runtime         string  `json:"runtime"`
+          }
+
+          func utcNow() string {
+            return time.Now().UTC().Format(time.RFC3339Nano)
+          }
+
+          func loadConfig(path string) (Config, error) {
+            raw, err := os.ReadFile(path)
+            if err != nil {
+              return Config{}, err
+            }
+
+            var cfg Config
+            if err := json.Unmarshal(raw, &cfg); err != nil {
+              return Config{}, err
+            }
+
+            if cfg.Source == "" {
+              cfg.Source = "sdn-ebpf-go-agent:skeleton-v1:self-test"
+            }
+
+            return cfg, nil
+          }
+
+          func classifyFlow(cfg Config, dstIP string, dstPort int) string {
+            for _, rule := range cfg.FlowRules {
+              if rule.Segment != cfg.Segment {
+                continue
+              }
+
+              if rule.DstIP != dstIP {
+                continue
+              }
+
+              if rule.DstPort != 0 && rule.DstPort != dstPort {
+                continue
+              }
+
+              return rule.FlowClass
+            }
+
+            return "unknown"
+          }
+
+          func appendLocal(path string, event Event) error {
+            if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+              return err
+            }
+
+            f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+            if err != nil {
+              return err
+            }
+            defer f.Close()
+
+            raw, err := json.Marshal(event)
+            if err != nil {
+              return err
+            }
+
+            _, err = f.Write(append(raw, '\n'))
+            return err
+          }
+
+          func writeState(path string, state State) error {
+            if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+              return err
+            }
+
+            raw, err := json.MarshalIndent(state, "", "  ")
+            if err != nil {
+              return err
+            }
+
+            return os.WriteFile(path, raw, 0644)
+          }
+
+          func postEvent(url string, event Event) error {
+            raw, err := json.Marshal(event)
+            if err != nil {
+              return err
+            }
+
+            req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(raw))
+            if err != nil {
+              return err
+            }
+
+            req.Header.Set("Content-Type", "application/json")
+
+            client := http.Client{Timeout: 5 * time.Second}
+            resp, err := client.Do(req)
+            if err != nil {
+              return err
+            }
+            defer resp.Body.Close()
+
+            _, _ = io.ReadAll(resp.Body)
+
+            if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+              return fmt.Errorf("collector returned status %d", resp.StatusCode)
+            }
+
+            return nil
+          }
+
+          func selfTestTarget(cfg Config) (string, int) {
+            switch cfg.Segment {
+            case "web":
+              return "172.31.210.12", 18080
+            case "api":
+              return "172.31.210.13", 15432
+            case "db":
+              return "172.31.210.12", 18080
+            case "bulk":
+              return "172.31.210.12", 18080
+            default:
+              return "172.31.210.12", 18080
+            }
+          }
+
+          func main() {
+            configPath := flag.String("config", "/etc/sdn-ebpf-agent/config.json", "agent config path")
+            selfTest := flag.Bool("self-test", false, "generate one synthetic contract-test event")
+            flag.Parse()
+
+            cfg, err := loadConfig(*configPath)
+            if err != nil {
+              fmt.Fprintf(os.Stderr, "CONFIG_LOAD_FAILED error=%v\n", err)
+              os.Exit(1)
+            }
+
+            if !*selfTest {
+              fmt.Println("SDN_EBPF_GO_AGENT_SKELETON_READY")
+              fmt.Printf("host=%s segment=%s collector=%s\n", cfg.Host, cfg.Segment, cfg.CollectorURL)
+              return
+            }
+
+            dstIP, dstPort := selfTestTarget(cfg)
+            flowClass := classifyFlow(cfg, dstIP, dstPort)
+
+            event := Event{
+              EventType:          "tcp_connect",
+              Timestamp:          utcNow(),
+              Host:               cfg.Host,
+              Segment:            cfg.Segment,
+              PID:                os.Getpid(),
+              Comm:               "sdn-ebpf-go-agent",
+              DstIP:              dstIP,
+              DstPort:            dstPort,
+              FlowClass:          flowClass,
+              Source:             "sdn-ebpf-go-agent:skeleton-v1:self-test",
+              AgentConfigVersion: cfg.Version,
+            }
+
+            state := State{
+              Status:       "running",
+              UpdatedAt:    utcNow(),
+              Host:         cfg.Host,
+              Segment:      cfg.Segment,
+              ConfigPath:   *configPath,
+              CollectorURL: cfg.CollectorURL,
+              EventCount:   1,
+              LastEvent:    &event,
+              Runtime:      "go-skeleton",
+            }
+
+            if err := appendLocal(cfg.LocalEventLog, event); err != nil {
+              msg := err.Error()
+              state.LastPostSuccess = false
+              state.LastError = &msg
+              _ = writeState(cfg.StateFile, state)
+              fmt.Fprintf(os.Stderr, "LOCAL_APPEND_FAILED error=%v\n", err)
+              os.Exit(1)
+            }
+
+            if err := postEvent(cfg.CollectorURL, event); err != nil {
+              msg := err.Error()
+              state.LastPostSuccess = false
+              state.LastError = &msg
+              _ = writeState(cfg.StateFile, state)
+              fmt.Fprintf(os.Stderr, "POST_FAILED error=%v\n", err)
+              os.Exit(1)
+            }
+
+            state.LastPostSuccess = true
+            state.LastError = nil
+
+            if err := writeState(cfg.StateFile, state); err != nil {
+              fmt.Fprintf(os.Stderr, "STATE_WRITE_FAILED error=%v\n", err)
+              os.Exit(1)
+            }
+
+            raw, _ := json.Marshal(event)
+            fmt.Println("SDN_EBPF_GO_AGENT_SELF_TEST_SENT")
+            fmt.Println(string(raw))
+          }
+
+    - name: Build Go eBPF agent skeleton
+      ansible.builtin.shell: |
+        set -euo pipefail
+        cd /opt/sdn-lab/ebpf/go-agent
+        go build -o /opt/sdn-lab/ebpf/go-agent/sdn-ebpf-agent ./cmd/sdn-ebpf-agent
+        /opt/sdn-lab/ebpf/go-agent/sdn-ebpf-agent --config /etc/sdn-ebpf-agent/config.json
+      args:
+        executable: /bin/bash
+      register: go_build
+      changed_when: true
+
+    - name: Show Go build result
+      ansible.builtin.debug:
+        var: go_build.stdout_lines

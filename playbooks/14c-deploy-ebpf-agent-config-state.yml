@@ -1,0 +1,368 @@
+- name: Deploy config-driven eBPF agent with local state
+  hosts: workloads
+  become: true
+  gather_facts: false
+
+  vars:
+    ebpf_agent_configs:
+      lab-sdn-app-web-01:
+        segment: web
+        role: web workload
+      lab-sdn-app-api-01:
+        segment: api
+        role: api workload
+      lab-sdn-data-db-01:
+        segment: db
+        role: database workload
+      lab-sdn-app-bulk-01:
+        segment: bulk
+        role: bulk traffic workload
+
+  tasks:
+    - name: Ensure eBPF agent config/state directories exist
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      loop:
+        - /etc/sdn-ebpf-agent
+        - /opt/sdn-lab/ebpf/agent
+        - /opt/sdn-lab/ebpf/events
+        - /opt/sdn-lab/ebpf/state
+        - /opt/sdn-lab/ebpf/logs
+        - /opt/sdn-lab/ebpf/scripts
+
+    - name: Write eBPF agent config
+      ansible.builtin.copy:
+        dest: /etc/sdn-ebpf-agent/config.json
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          {
+            "version": "1",
+            "host": "{{ inventory_hostname }}",
+            "segment": "{{ ebpf_agent_configs[inventory_hostname].segment }}",
+            "role": "{{ ebpf_agent_configs[inventory_hostname].role }}",
+            "collector_url": "http://10.60.10.11:8090/ebpf/events",
+            "bpftrace_script": "/opt/sdn-lab/ebpf/scripts/tcp-v4-connect-ip-port.bt",
+            "local_event_log": "/opt/sdn-lab/ebpf/events/agent-events.jsonl",
+            "state_file": "/opt/sdn-lab/ebpf/state/agent_state.json",
+            "overlay_prefix": "172.31.210.",
+            "source": "sdn-ebpf-agent:config-v1:bpftrace:kprobe:tcp_v4_connect",
+            "flow_rules": [
+              {
+                "segment": "web",
+                "dst_ip": "172.31.210.12",
+                "dst_port": 18080,
+                "flow_class": "web_to_api"
+              },
+              {
+                "segment": "api",
+                "dst_ip": "172.31.210.13",
+                "dst_port": 15432,
+                "flow_class": "critical_api_to_db"
+              },
+              {
+                "segment": "db",
+                "dst_ip": "172.31.210.12",
+                "dst_port": 18080,
+                "flow_class": "db_to_api"
+              },
+              {
+                "segment": "bulk",
+                "dst_ip": "172.31.210.12",
+                "dst_port": 18080,
+                "flow_class": "bulk_to_api"
+              },
+              {
+                "segment": "web",
+                "dst_ip": "172.31.210.13",
+                "flow_class": "denied_web_to_db"
+              },
+              {
+                "segment": "bulk",
+                "dst_ip": "172.31.210.13",
+                "flow_class": "denied_bulk_to_db"
+              }
+            ]
+          }
+
+    - name: Install config-driven eBPF agent daemon
+      ansible.builtin.copy:
+        dest: /opt/sdn-lab/ebpf/agent/sdn-ebpf-agent.py
+        owner: root
+        group: root
+        mode: "0755"
+        content: |
+          #!/usr/bin/env python3
+          import json
+          import os
+          import re
+          import socket
+          import subprocess
+          import time
+          import urllib.request
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          CONFIG_PATH = Path(
+              os.environ.get(
+                  "SDN_EBPF_CONFIG_PATH",
+                  "/etc/sdn-ebpf-agent/config.json",
+              )
+          )
+
+          LINE_RE = re.compile(
+              r"TCP_CONNECT pid=(?P<pid>\d+) comm=(?P<comm>\S+) daddr=(?P<daddr>[0-9.]+) dport=(?P<dport>\d+)"
+          )
+
+          def utc_now():
+              return datetime.now(timezone.utc).isoformat()
+
+          def load_config():
+              with CONFIG_PATH.open("r", encoding="utf-8") as f:
+                  cfg = json.load(f)
+
+              cfg.setdefault("host", socket.gethostname())
+              cfg.setdefault("segment", "unknown")
+              cfg.setdefault("collector_url", "http://10.60.10.11:8090/ebpf/events")
+              cfg.setdefault("overlay_prefix", "172.31.210.")
+              cfg.setdefault("source", "sdn-ebpf-agent:config-v1:bpftrace:kprobe:tcp_v4_connect")
+              cfg.setdefault("local_event_log", "/opt/sdn-lab/ebpf/events/agent-events.jsonl")
+              cfg.setdefault("state_file", "/opt/sdn-lab/ebpf/state/agent_state.json")
+              cfg.setdefault("bpftrace_script", "/opt/sdn-lab/ebpf/scripts/tcp-v4-connect-ip-port.bt")
+              cfg.setdefault("flow_rules", [])
+
+              return cfg
+
+          def write_state(cfg, state):
+              state_path = Path(cfg["state_file"])
+              state_path.parent.mkdir(parents=True, exist_ok=True)
+
+              state["updated_at"] = utc_now()
+              state["host"] = cfg["host"]
+              state["segment"] = cfg["segment"]
+              state["config_path"] = str(CONFIG_PATH)
+              state["collector_url"] = cfg["collector_url"]
+
+              state_path.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
+
+          def classify_flow(cfg, dst_ip, dst_port):
+              segment = cfg["segment"]
+
+              for rule in cfg.get("flow_rules", []):
+                  if rule.get("segment") != segment:
+                      continue
+
+                  if rule.get("dst_ip") != dst_ip:
+                      continue
+
+                  if "dst_port" in rule and int(rule["dst_port"]) != int(dst_port):
+                      continue
+
+                  return rule.get("flow_class", "unknown")
+
+              return "unknown"
+
+          def post_event(cfg, event):
+              data = json.dumps(event).encode("utf-8")
+              req = urllib.request.Request(
+                  cfg["collector_url"],
+                  data=data,
+                  headers={"Content-Type": "application/json"},
+                  method="POST",
+              )
+
+              with urllib.request.urlopen(req, timeout=5) as resp:
+                  resp.read()
+
+          def append_local(cfg, event):
+              local_event_log = Path(cfg["local_event_log"])
+              local_event_log.parent.mkdir(parents=True, exist_ok=True)
+
+              with local_event_log.open("a", encoding="utf-8") as f:
+                  f.write(json.dumps(event, sort_keys=True) + "\n")
+
+          def build_event(cfg, match):
+              dst_ip = match.group("daddr")
+              dst_port = int(match.group("dport"))
+              flow_class = classify_flow(cfg, dst_ip, dst_port)
+
+              return {
+                  "event_type": "tcp_connect",
+                  "timestamp": utc_now(),
+                  "host": cfg["host"],
+                  "segment": cfg["segment"],
+                  "pid": int(match.group("pid")),
+                  "comm": match.group("comm"),
+                  "dst_ip": dst_ip,
+                  "dst_port": dst_port,
+                  "flow_class": flow_class,
+                  "source": cfg["source"],
+                  "agent_config_version": cfg.get("version", "unknown"),
+              }
+
+          def run_agent_once():
+              cfg = load_config()
+
+              state = {
+                  "status": "starting",
+                  "started_at": utc_now(),
+                  "event_count": 0,
+                  "last_event": None,
+                  "last_post_success": None,
+                  "last_error": None,
+              }
+
+              write_state(cfg, state)
+
+              print(
+                  f"SDN_EBPF_AGENT_START host={cfg['host']} "
+                  f"segment={cfg['segment']} collector={cfg['collector_url']} "
+                  f"config={CONFIG_PATH}",
+                  flush=True,
+              )
+
+              cmd = ["bpftrace", cfg["bpftrace_script"]]
+
+              proc = subprocess.Popen(
+                  cmd,
+                  stdout=subprocess.PIPE,
+                  stderr=subprocess.STDOUT,
+                  text=True,
+                  bufsize=1,
+              )
+
+              state["status"] = "running"
+              write_state(cfg, state)
+
+              assert proc.stdout is not None
+
+              for line in proc.stdout:
+                  line = line.rstrip()
+                  print(line, flush=True)
+
+                  match = LINE_RE.search(line)
+                  if not match:
+                      continue
+
+                  event = build_event(cfg, match)
+
+                  if not event["dst_ip"].startswith(cfg["overlay_prefix"]):
+                      continue
+
+                  if event["flow_class"] == "unknown":
+                      continue
+
+                  append_local(cfg, event)
+
+                  try:
+                      post_event(cfg, event)
+                      state["last_post_success"] = True
+                      state["last_error"] = None
+                      sent = True
+                  except Exception as exc:
+                      state["last_post_success"] = False
+                      state["last_error"] = str(exc)
+                      sent = False
+
+                  state["event_count"] += 1
+                  state["last_event"] = event
+                  write_state(cfg, state)
+
+                  print(
+                      "SDN_EBPF_EVENT_SENT "
+                      + json.dumps(
+                          {
+                              "sent": sent,
+                              "flow_class": event["flow_class"],
+                              "host": event["host"],
+                              "dst_ip": event["dst_ip"],
+                              "dst_port": event["dst_port"],
+                              "config_version": event["agent_config_version"],
+                          },
+                          sort_keys=True,
+                      ),
+                      flush=True,
+                  )
+
+              rc = proc.wait()
+              state["status"] = "exited"
+              state["last_error"] = f"bpftrace exited rc={rc}"
+              write_state(cfg, state)
+              return rc
+
+          def main():
+              while True:
+                  try:
+                      rc = run_agent_once()
+                      print(f"SDN_EBPF_AGENT_RESTART rc={rc}", flush=True)
+                  except Exception as exc:
+                      try:
+                          cfg = load_config()
+                          write_state(
+                              cfg,
+                              {
+                                  "status": "error",
+                                  "event_count": 0,
+                                  "last_event": None,
+                                  "last_post_success": False,
+                                  "last_error": str(exc),
+                              },
+                          )
+                      except Exception:
+                          pass
+
+                      print(f"SDN_EBPF_AGENT_ERROR error={exc}", flush=True)
+
+                  time.sleep(3)
+
+          if __name__ == "__main__":
+              main()
+
+    - name: Update eBPF agent environment file
+      ansible.builtin.copy:
+        dest: /etc/sdn-ebpf-agent.env
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          SDN_EBPF_CONFIG_PATH=/etc/sdn-ebpf-agent/config.json
+
+    - name: Restart eBPF agent
+      ansible.builtin.systemd:
+        name: sdn-ebpf-agent
+        daemon_reload: true
+        enabled: true
+        state: restarted
+
+    - name: Wait for config-driven eBPF agent
+      ansible.builtin.pause:
+        seconds: 5
+
+    - name: Show config and state
+      ansible.builtin.shell: |
+        set -euo pipefail
+
+        echo "----- config -----"
+        jq . /etc/sdn-ebpf-agent/config.json
+
+        echo "----- service -----"
+        systemctl is-active sdn-ebpf-agent
+
+        echo "----- state -----"
+        cat /opt/sdn-lab/ebpf/state/agent_state.json | jq .
+
+        echo "----- journal -----"
+        journalctl -u sdn-ebpf-agent -n 20 --no-pager
+      args:
+        executable: /bin/bash
+      register: agent_config_state
+      changed_when: false
+
+    - name: Print config-driven agent state
+      ansible.builtin.debug:
+        var: agent_config_state.stdout_lines

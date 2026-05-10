@@ -1,0 +1,6 @@
+- name: Install bulk traffic tools
+  ansible.builtin.apt:
+    name:
+      - iperf3
+      - apache2-utils
+    state: present

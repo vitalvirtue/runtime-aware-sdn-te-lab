@@ -1,0 +1,115 @@
+- name: Clear central eBPF event store
+  hosts: control
+  gather_facts: false
+
+  tasks:
+    - name: Clear eBPF events
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8090/ebpf/events
+        method: DELETE
+        return_content: true
+
+
+- name: Run Go eBPF agent skeleton contract test
+  hosts: workloads
+  become: true
+  gather_facts: false
+
+  vars:
+    expected_flow_class:
+      lab-sdn-app-web-01: "web_to_api"
+      lab-sdn-app-api-01: "critical_api_to_db"
+      lab-sdn-data-db-01: "db_to_api"
+      lab-sdn-app-bulk-01: "bulk_to_api"
+
+  tasks:
+    - name: Run Go agent self-test
+      ansible.builtin.shell: |
+        set -euo pipefail
+        /opt/sdn-lab/ebpf/go-agent/sdn-ebpf-agent \
+          --config /etc/sdn-ebpf-agent/config.json \
+          --self-test
+      args:
+        executable: /bin/bash
+      register: selftest
+      changed_when: true
+      failed_when: >
+        'SDN_EBPF_GO_AGENT_SELF_TEST_SENT' not in selftest.stdout or
+        expected_flow_class[inventory_hostname] not in selftest.stdout
+
+    - name: Show Go agent self-test output
+      ansible.builtin.debug:
+        var: selftest.stdout_lines
+
+    - name: Read Go agent local state
+      ansible.builtin.slurp:
+        src: /opt/sdn-lab/ebpf/state/agent_state.json
+      register: state_raw
+
+    - name: Parse Go agent local state
+      ansible.builtin.set_fact:
+        go_agent_state: "{{ state_raw.content | b64decode | from_json }}"
+
+    - name: Assert Go agent local state
+      ansible.builtin.assert:
+        that:
+          - go_agent_state.runtime == "go-skeleton"
+          - go_agent_state.host == inventory_hostname
+          - go_agent_state.last_post_success == true
+          - go_agent_state.last_event.flow_class == expected_flow_class[inventory_hostname]
+          - go_agent_state.last_event.source == "sdn-ebpf-go-agent:skeleton-v1:self-test"
+        success_msg: "GO_EBPF_AGENT_LOCAL_STATE_PASS {{ inventory_hostname }}"
+        fail_msg: "Go eBPF agent local state validation failed."
+
+
+- name: Verify Go agent events in central collector
+  hosts: control
+  gather_facts: false
+
+  tasks:
+    - name: Read current eBPF events
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8090/ebpf/events/current?limit=100
+        method: GET
+        return_content: true
+      register: current_events
+      until: >
+        ((current_events.content | from_json).count | int) >= 4
+      retries: 10
+      delay: 2
+
+    - name: Parse central events
+      ansible.builtin.set_fact:
+        ebpf_state: "{{ current_events.content | from_json }}"
+
+    - name: Extract event attributes
+      ansible.builtin.set_fact:
+        flow_classes: "{{ ebpf_state.events | map(attribute='flow_class') | list }}"
+        sources: "{{ ebpf_state.events | map(attribute='source') | list }}"
+        comms: "{{ ebpf_state.events | map(attribute='comm') | list }}"
+
+    - name: Show central Go skeleton events
+      ansible.builtin.debug:
+        msg:
+          count: "{{ ebpf_state.count }}"
+          flow_classes: "{{ flow_classes }}"
+          sources: "{{ sources }}"
+          comms: "{{ comms }}"
+
+    - name: Assert Go skeleton events in collector
+      ansible.builtin.assert:
+        that:
+          - ebpf_state.status == "ok"
+          - ebpf_state.count | int >= 4
+          - "'web_to_api' in flow_classes"
+          - "'critical_api_to_db' in flow_classes"
+          - "'db_to_api' in flow_classes"
+          - "'bulk_to_api' in flow_classes"
+          - "'sdn-ebpf-go-agent:skeleton-v1:self-test' in sources"
+          - "'sdn-ebpf-go-agent' in comms"
+        success_msg: "GO_EBPF_AGENT_COLLECTOR_CONTRACT_PASS"
+        fail_msg: "Go eBPF agent collector contract validation failed."
+
+    - name: Mark milestone 14D passed
+      ansible.builtin.debug:
+        msg: "SDN_GO_EBPF_AGENT_SKELETON_PASS"

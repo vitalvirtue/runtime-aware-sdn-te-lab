@@ -1,0 +1,92 @@
+- name: Verify workload services from ops node
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Check web health
+      ansible.builtin.uri:
+        url: http://10.60.10.31/health
+        method: GET
+        return_content: true
+      register: web_health
+
+    - name: Check API health
+      ansible.builtin.uri:
+        url: http://10.60.10.32:18080/health
+        method: GET
+        return_content: true
+      register: api_health
+
+    - name: Check DB health
+      ansible.builtin.uri:
+        url: http://10.60.10.33:15432/health
+        method: GET
+        return_content: true
+      register: db_health
+
+    - name: Check API to DB path
+      ansible.builtin.uri:
+        url: http://10.60.10.32:18080/db-check
+        method: GET
+        return_content: true
+      register: api_db_check
+
+    - name: Parse service responses
+      ansible.builtin.set_fact:
+        web_json: "{{ web_health.content | from_json }}"
+        api_json: "{{ api_health.content | from_json }}"
+        db_json: "{{ db_health.content | from_json }}"
+        api_db_check_json: "{{ api_db_check.content | from_json }}"
+
+    - name: Show service health summary
+      ansible.builtin.debug:
+        msg:
+          web: "{{ web_json }}"
+          api: "{{ api_json }}"
+          db: "{{ db_json }}"
+          api_db_check: "{{ api_db_check_json }}"
+
+    - name: Assert base services are healthy
+      ansible.builtin.assert:
+        that:
+          - web_json.status == "ok"
+          - api_json.status == "ok"
+          - db_json.status == "ok"
+          - api_db_check_json.db_reachable == true
+          - api_db_check_json.db_status_code == 200
+        success_msg: "WORKLOAD_SERVICES_BASELINE_PASS"
+        fail_msg: "Workload service baseline verification failed."
+
+
+- name: Verify east-west paths from workload nodes
+  hosts: web:api:bulk
+  become: false
+  gather_facts: false
+
+  tasks:
+    - name: Run node-specific connectivity checks
+      ansible.builtin.shell: |
+        set -e
+
+        echo "hostname=$(hostname)"
+
+        if [ "$(hostname)" = "lab-sdn-app-web-01" ]; then
+          curl -fsS http://10.60.10.32:18080/health
+          curl -fsS http://10.60.10.32:18080/db-check
+        fi
+
+        if [ "$(hostname)" = "lab-sdn-app-api-01" ]; then
+          curl -fsS http://10.60.10.33:15432/health
+          curl -fsS http://10.60.10.33:15432/query
+        fi
+
+        if [ "$(hostname)" = "lab-sdn-app-bulk-01" ]; then
+          /opt/sdn-lab/traffic/run-basic-traffic.sh
+        fi
+      args:
+        executable: /bin/bash
+      register: node_check
+
+    - name: Show node check output
+      ansible.builtin.debug:
+        var: node_check.stdout_lines

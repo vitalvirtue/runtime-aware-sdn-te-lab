@@ -1,0 +1,76 @@
+- name: Provision SDN lab VMs on Proxmox
+  hosts: proxmox_api
+  gather_facts: false
+  collections:
+    - community.proxmox
+
+  tasks:
+    - name: Clone VMs from template
+      community.proxmox.proxmox_kvm:
+        api_host: "{{ lookup('env', 'PROXMOX_HOST') }}"
+        api_user: "{{ lookup('env', 'PROXMOX_USER') }}"
+        api_token_id: "{{ lookup('env', 'PROXMOX_TOKEN_ID') }}"
+        api_token_secret: "{{ lookup('env', 'PROXMOX_TOKEN_SECRET') }}"
+        node: "{{ pve_node }}"
+        clone: "{{ pve_template_name }}"
+        newid: "{{ item.vmid }}"
+        name: "{{ item.name }}"
+        storage: "{{ pve_storage }}"
+        full: true
+        timeout: 600
+        state: present
+      loop: "{{ lab_vms }}"
+
+    - name: Copy automation public key to Proxmox host
+      ansible.builtin.copy:
+        src: "{{ ssh_pubkey_file }}"
+        dest: /root/.ssh/automation_id_ed25519.pub
+        mode: '0600'
+      delegate_to: pve-host
+
+    - name: Force VM hardware and cloud-init config with qm set
+      ansible.builtin.shell: |
+        qm set {{ item.vmid }} \
+          --cores {{ item.cores }} \
+          --sockets 1 \
+          --cpu host \
+          --memory {{ item.memory }} \
+          --scsihw virtio-scsi-single \
+          --net0 virtio,bridge={{ mgmt_bridge }} \
+          --net1 virtio,bridge={{ lab_bridge }} \
+          --ciuser {{ ci_user }} \
+          --cipassword 'TempPass123!' \
+          --sshkey /root/.ssh/automation_id_ed25519.pub \
+          --ipconfig0 ip={{ item.mgmt_ip }}/24,gw={{ mgmt_gateway }} \
+          --ipconfig1 ip={{ item.lab_ip }}/24 \
+          --agent enabled=1 \
+          --boot order=scsi0 \
+          --bootdisk scsi0 \
+          --description "{{ item.description }}"
+      delegate_to: pve-host
+      loop: "{{ lab_vms }}"
+      changed_when: true
+
+    - name: Resize disks on Proxmox host
+      ansible.builtin.command: "qm resize {{ item.vmid }} scsi0 {{ item.disk_gb }}G"
+      delegate_to: pve-host
+      loop: "{{ lab_vms }}"
+      changed_when: true
+      failed_when: false
+
+    - name: Regenerate cloud-init image
+      ansible.builtin.command: "qm cloudinit update {{ item.vmid }}"
+      delegate_to: pve-host
+      loop: "{{ lab_vms }}"
+      changed_when: true
+
+    - name: Start VMs
+      community.proxmox.proxmox_kvm:
+        api_host: "{{ lookup('env', 'PROXMOX_HOST') }}"
+        api_user: "{{ lookup('env', 'PROXMOX_USER') }}"
+        api_token_id: "{{ lookup('env', 'PROXMOX_TOKEN_ID') }}"
+        api_token_secret: "{{ lookup('env', 'PROXMOX_TOKEN_SECRET') }}"
+        node: "{{ pve_node }}"
+        name: "{{ item.name }}"
+        state: started
+      loop: "{{ lab_vms }}"

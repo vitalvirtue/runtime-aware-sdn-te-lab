@@ -1,0 +1,45 @@
+- name: Configure controller node
+  hosts: control
+  become: true
+  roles:
+    - docker
+    - ctrl_base
+    - onos
+
+- name: Configure fabric node
+  hosts: fabric
+  become: true
+  roles:
+    - docker
+    - fabric_base
+    - fabric_container_tools
+
+- name: Configure edge nodes
+  hosts: edge
+  become: true
+  roles:
+    - edge_ovs
+
+- name: Configure web workload
+  hosts: web
+  become: true
+  roles:
+    - web
+
+- name: Configure api workload
+  hosts: api
+  become: true
+  roles:
+    - api
+
+- name: Configure db workload
+  hosts: db
+  become: true
+  roles:
+    - db
+
+- name: Configure bulk workload
+  hosts: bulk
+  become: true
+  roles:
+    - bulk

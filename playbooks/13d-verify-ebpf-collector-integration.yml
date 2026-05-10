@@ -1,0 +1,84 @@
+- name: Clear central eBPF event store
+  hosts: control
+  gather_facts: false
+
+  tasks:
+    - name: Clear eBPF events
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8090/ebpf/events
+        method: DELETE
+        return_content: true
+      register: clear_result
+
+    - name: Show clear result
+      ansible.builtin.debug:
+        var: clear_result.content
+
+
+- name: Generate and submit eBPF telemetry from workloads
+  hosts: workloads
+  become: true
+  gather_facts: false
+  serial: 1
+
+  tasks:
+    - name: Submit eBPF JSON telemetry to collector
+      ansible.builtin.shell: |
+        set -e
+        /opt/sdn-lab/ebpf/submit-json-telemetry-smoke.sh
+      args:
+        executable: /bin/bash
+      register: submit_result
+      failed_when: >
+        'EBPF_TELEMETRY_SUBMIT_DONE' not in submit_result.stdout or
+        'accepted_count' not in submit_result.stdout
+
+    - name: Show submit output
+      ansible.builtin.debug:
+        var: submit_result.stdout_lines
+
+
+- name: Verify central eBPF telemetry store
+  hosts: control
+  gather_facts: false
+
+  tasks:
+    - name: Read current eBPF events
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8090/ebpf/events/current?limit=100
+        method: GET
+        return_content: true
+      register: current_events
+
+    - name: Parse current eBPF events
+      ansible.builtin.set_fact:
+        ebpf_state: "{{ current_events.content | from_json }}"
+
+    - name: Extract flow classes and hosts
+      ansible.builtin.set_fact:
+        ebpf_flow_classes: "{{ ebpf_state.events | map(attribute='flow_class') | list }}"
+        ebpf_hosts: "{{ ebpf_state.events | map(attribute='host') | list }}"
+
+    - name: Show central eBPF telemetry summary
+      ansible.builtin.debug:
+        msg:
+          count: "{{ ebpf_state.count }}"
+          total_count: "{{ ebpf_state.total_count }}"
+          flow_classes: "{{ ebpf_flow_classes }}"
+          hosts: "{{ ebpf_hosts }}"
+
+    - name: Assert central eBPF telemetry contains expected flow classes
+      ansible.builtin.assert:
+        that:
+          - ebpf_state.status == "ok"
+          - ebpf_state.count | int >= 4
+          - "'web_to_api' in ebpf_flow_classes"
+          - "'critical_api_to_db' in ebpf_flow_classes"
+          - "'db_to_api' in ebpf_flow_classes"
+          - "'bulk_to_api' in ebpf_flow_classes"
+        success_msg: "EBPF_COLLECTOR_INTEGRATION_PASS"
+        fail_msg: "Central eBPF telemetry collector validation failed."
+
+    - name: Mark milestone 13D passed
+      ansible.builtin.debug:
+        msg: "EBPF_TELEMETRY_COLLECTOR_INTEGRATION_PASS"

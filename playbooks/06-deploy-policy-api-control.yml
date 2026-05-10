@@ -1,0 +1,207 @@
+- name: Stop old policy API on fabric node
+  hosts: fabric
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Stop old sdn-policy-api service if exists
+      ansible.builtin.systemd:
+        name: sdn-policy-api
+        state: stopped
+        enabled: false
+      failed_when: false
+
+    - name: Create policy controller bundle on fabric
+      ansible.builtin.shell: |
+        set -e
+        rm -f /tmp/sdn-policy-controller-bundle.tgz
+        tar --exclude='controller/.venv' \
+          -C /opt/sdn-lab/fabric \
+          -czf /tmp/sdn-policy-controller-bundle.tgz \
+          controller \
+          policies \
+          out/segmentation_table_v2.json \
+          out/segmentation_table_v2.p4info.txt
+      args:
+        executable: /bin/bash
+
+    - name: Fetch bundle from fabric to ops VM
+      ansible.builtin.fetch:
+        src: /tmp/sdn-policy-controller-bundle.tgz
+        dest: /tmp/sdn-lab-m06/sdn-policy-controller-bundle.tgz
+        flat: true
+
+
+- name: Deploy policy API to controller node
+  hosts: control
+  become: true
+  gather_facts: true
+
+  vars:
+    bundle_local_path: /tmp/sdn-lab-m06/sdn-policy-controller-bundle.tgz
+    bundle_remote_path: /tmp/sdn-policy-controller-bundle.tgz
+    unpack_dir: /tmp/sdn-policy-controller-unpack
+
+  tasks:
+    - name: Install required OS packages
+      ansible.builtin.apt:
+        name:
+          - python3
+          - python3-venv
+          - python3-pip
+          - curl
+          - jq
+          - netcat-openbsd
+        state: present
+        update_cache: true
+
+    - name: Create target directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: automation
+        group: automation
+        mode: "0755"
+      loop:
+        - /opt/sdn-lab
+        - /opt/sdn-lab/policy-controller
+        - /opt/sdn-lab/policies
+        - /opt/sdn-lab/p4-artifacts
+        - /opt/sdn-lab/scripts
+
+    - name: Copy bundle to controller node
+      ansible.builtin.copy:
+        src: "{{ bundle_local_path }}"
+        dest: "{{ bundle_remote_path }}"
+        mode: "0644"
+
+    - name: Unpack bundle
+      ansible.builtin.shell: |
+        set -e
+        rm -rf "{{ unpack_dir }}"
+        mkdir -p "{{ unpack_dir }}"
+        tar -xzf "{{ bundle_remote_path }}" -C "{{ unpack_dir }}"
+
+        rm -rf /opt/sdn-lab/policy-controller/*
+        cp -a "{{ unpack_dir }}/controller/." /opt/sdn-lab/policy-controller/
+
+        rm -rf /opt/sdn-lab/policies/*
+        cp -a "{{ unpack_dir }}/policies/." /opt/sdn-lab/policies/
+
+        cp "{{ unpack_dir }}/out/segmentation_table_v2.json" /opt/sdn-lab/p4-artifacts/
+        cp "{{ unpack_dir }}/out/segmentation_table_v2.p4info.txt" /opt/sdn-lab/p4-artifacts/
+
+        chown -R automation:automation /opt/sdn-lab
+      args:
+        executable: /bin/bash
+
+    - name: Create Python virtual environment
+      become_user: automation
+      ansible.builtin.command:
+        cmd: python3 -m venv /opt/sdn-lab/policy-controller/.venv
+        creates: /opt/sdn-lab/policy-controller/.venv/bin/python
+
+    - name: Install Python dependencies
+      become_user: automation
+      ansible.builtin.shell: |
+        set -e
+        /opt/sdn-lab/policy-controller/.venv/bin/pip install --upgrade pip
+        /opt/sdn-lab/policy-controller/.venv/bin/pip install fastapi uvicorn pyyaml p4runtime-shell || \
+        /opt/sdn-lab/policy-controller/.venv/bin/pip install fastapi uvicorn pyyaml p4runtime-sh
+      args:
+        executable: /bin/bash
+
+    - name: Create environment file
+      ansible.builtin.copy:
+        dest: /etc/sdn-policy-api.env
+        owner: root
+        group: automation
+        mode: "0640"
+        content: |
+          SDN_API_HOST=0.0.0.0
+          SDN_API_PORT=8088
+
+          SDN_P4INFO=/opt/sdn-lab/p4-artifacts/segmentation_table_v2.p4info.txt
+          SDN_BMV2_JSON=/opt/sdn-lab/p4-artifacts/segmentation_table_v2.json
+          SDN_DEFAULT_POLICY=/opt/sdn-lab/policies/segmentation_policy.yaml
+
+          SDN_P4RUNTIME_ADDR=10.60.10.12:50052
+          SDN_DEVICE_ID=1
+
+          SDN_TABLE_NAME=MyIngress.segment_policy
+          SDN_ACTION_NAME=MyIngress.allow_forward
+
+    - name: Create start script
+      ansible.builtin.copy:
+        dest: /opt/sdn-lab/scripts/start-policy-api-service.sh
+        owner: automation
+        group: automation
+        mode: "0755"
+        content: |
+          #!/usr/bin/env bash
+          set -euo pipefail
+
+          source /etc/sdn-policy-api.env
+
+          cd /opt/sdn-lab/policy-controller
+          source .venv/bin/activate
+
+          exec uvicorn policy_controller_api:app \
+            --host "${SDN_API_HOST}" \
+            --port "${SDN_API_PORT}" \
+            --workers 1
+
+    - name: Create systemd service
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/sdn-policy-api.service
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=SDN Lab Policy Controller API
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=simple
+          User=automation
+          Group=automation
+          WorkingDirectory=/opt/sdn-lab/policy-controller
+          EnvironmentFile=/etc/sdn-policy-api.env
+          ExecStart=/opt/sdn-lab/scripts/start-policy-api-service.sh
+          Restart=on-failure
+          RestartSec=3
+
+          NoNewPrivileges=true
+          PrivateTmp=true
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Enable and start policy API service
+      ansible.builtin.systemd:
+        name: sdn-policy-api
+        enabled: true
+        state: restarted
+
+    - name: Wait for API port
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 8088
+        timeout: 30
+
+    - name: Check API health
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8088/health
+        method: GET
+        return_content: true
+      register: api_health
+
+    - name: Show API health
+      ansible.builtin.debug:
+        var: api_health.json

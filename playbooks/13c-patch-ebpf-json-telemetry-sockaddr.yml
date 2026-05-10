@@ -1,0 +1,62 @@
+- name: Patch eBPF JSON telemetry to read sockaddr_in from tcp_v4_connect arg1
+  hosts: workloads
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Patch tcp_v4_connect bpftrace script
+      ansible.builtin.copy:
+        dest: /opt/sdn-lab/ebpf/scripts/tcp-v4-connect-ip-port.bt
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          struct in_addr {
+            unsigned int s_addr;
+          };
+
+          struct sockaddr_in {
+            unsigned short sin_family;
+            unsigned short sin_port;
+            struct in_addr sin_addr;
+            unsigned char sin_zero[8];
+          };
+
+          BEGIN
+          {
+            printf("EBPF_TCP_V4_CONNECT_TRACE_START\n");
+          }
+
+          /*
+           * tcp_v4_connect signature:
+           *   int tcp_v4_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len)
+           *
+           * At function entry, sk->__sk_common.skc_daddr may still be empty.
+           * Therefore we read destination IP/port from arg1: sockaddr_in *uaddr.
+           */
+          kprobe:tcp_v4_connect
+          /comm == "curl" || comm == "python3" || comm == "uvicorn" || comm == "nginx"/
+          {
+            $uaddr = (struct sockaddr_in *)arg1;
+
+            $daddr = $uaddr->sin_addr.s_addr;
+            $dport = $uaddr->sin_port;
+
+            /*
+             * sin_port is network byte order.
+             * Convert manually to host byte order.
+             */
+            $dport_host = (($dport >> 8) & 0xff) | (($dport & 0xff) << 8);
+
+            printf("TCP_CONNECT pid=%d comm=%s daddr=%s dport=%d\n",
+              pid,
+              comm,
+              ntop($daddr),
+              $dport_host
+            );
+          }
+
+          END
+          {
+            printf("EBPF_TCP_V4_CONNECT_TRACE_END\n");
+          }

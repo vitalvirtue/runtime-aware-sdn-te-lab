@@ -1,0 +1,77 @@
+- name: Verify two-edge two-path traffic engineering baseline
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: WEB can reach API locally through edge-a
+      ansible.builtin.shell: |
+        ssh -o StrictHostKeyChecking=no automation@10.60.10.31 \
+          "curl -fsS http://172.31.210.12:18080/health"
+      register: web_to_api
+      changed_when: false
+
+    - name: API can reach DB through critical path-1
+      ansible.builtin.shell: |
+        ssh -o StrictHostKeyChecking=no automation@10.60.10.32 \
+          "curl -fsS http://172.31.210.13:15432/health"
+      register: api_to_db
+      changed_when: false
+
+    - name: BULK can reach API through bulk/default path-2
+      ansible.builtin.shell: |
+        ssh -o StrictHostKeyChecking=no automation@10.60.10.34 \
+          "curl -fsS http://172.31.210.12:18080/health"
+      register: bulk_to_api
+      changed_when: false
+
+    - name: WEB must not reach DB
+      ansible.builtin.shell: |
+        ssh -o StrictHostKeyChecking=no automation@10.60.10.31 \
+          "timeout 4 curl -fsS http://172.31.210.13:15432/health"
+      register: web_to_db
+      changed_when: false
+      failed_when: false
+
+    - name: BULK must not reach DB
+      ansible.builtin.shell: |
+        ssh -o StrictHostKeyChecking=no automation@10.60.10.34 \
+          "timeout 4 curl -fsS http://172.31.210.13:15432/health"
+      register: bulk_to_db
+      changed_when: false
+      failed_when: false
+
+    - name: Show TE behavior results
+      ansible.builtin.debug:
+        msg:
+          web_to_api_rc: "{{ web_to_api.rc }}"
+          api_to_db_rc: "{{ api_to_db.rc }}"
+          bulk_to_api_rc: "{{ bulk_to_api.rc }}"
+          web_to_db_rc: "{{ web_to_db.rc }}"
+          bulk_to_db_rc: "{{ bulk_to_db.rc }}"
+
+    - name: Assert two-edge TE baseline behavior
+      ansible.builtin.assert:
+        that:
+          - web_to_api.rc == 0
+          - api_to_db.rc == 0
+          - bulk_to_api.rc == 0
+          - web_to_db.rc != 0
+          - bulk_to_db.rc != 0
+        success_msg: "TWO_EDGE_TWO_PATH_TE_BASELINE_PASS"
+        fail_msg: "Two-edge/two-path TE baseline behavior failed."
+
+
+- name: Show edge flow counters after tests
+  hosts: edge
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Dump br-edge0 flows
+      ansible.builtin.command: ovs-ofctl -O OpenFlow13 dump-flows br-edge0
+      register: edge_flows
+      changed_when: false
+
+    - name: Show flow counters
+      ansible.builtin.debug:
+        var: edge_flows.stdout_lines

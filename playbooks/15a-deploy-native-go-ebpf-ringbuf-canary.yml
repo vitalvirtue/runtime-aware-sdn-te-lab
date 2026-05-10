@@ -1,0 +1,499 @@
+- name: Deploy native Go eBPF ring buffer canary
+  hosts: workloads
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Install native eBPF build dependencies
+      ansible.builtin.apt:
+        name:
+          - golang
+          - clang
+          - llvm
+          - libbpf-dev
+          - bpftool
+          - make
+          - gcc
+          - jq
+          - curl
+        state: present
+        update_cache: true
+
+    - name: Create native eBPF agent directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      loop:
+        - /opt/sdn-lab/ebpf/native-agent
+        - /opt/sdn-lab/ebpf/native-agent/cmd/sdn-ebpf-native-agent
+        - /opt/sdn-lab/ebpf/native-agent/bpf
+        - /opt/sdn-lab/ebpf/state
+        - /opt/sdn-lab/ebpf/events
+
+    - name: Check BTF availability
+      ansible.builtin.shell: |
+        set -euo pipefail
+
+        test -s /sys/kernel/btf/vmlinux
+        echo "BTF_AVAILABLE kernel=$(uname -r)"
+      args:
+        executable: /bin/bash
+      register: btf_check
+      changed_when: false
+
+    - name: Show BTF check
+      ansible.builtin.debug:
+        var: btf_check.stdout_lines
+
+    - name: Generate vmlinux.h
+      ansible.builtin.shell: |
+        set -euo pipefail
+        bpftool btf dump file /sys/kernel/btf/vmlinux format c > /opt/sdn-lab/ebpf/native-agent/bpf/vmlinux.h
+        test -s /opt/sdn-lab/ebpf/native-agent/bpf/vmlinux.h
+        echo "VMLINUX_H_GENERATED"
+      args:
+        executable: /bin/bash
+      changed_when: true
+
+    - name: Create native eBPF Go module
+      ansible.builtin.copy:
+        dest: /opt/sdn-lab/ebpf/native-agent/go.mod
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          module sdn-ebpf-native-agent
+
+          go 1.19
+
+          require github.com/cilium/ebpf v0.12.3
+
+    - name: Create native eBPF C program
+      ansible.builtin.copy:
+        dest: /opt/sdn-lab/ebpf/native-agent/bpf/tcpconnect.bpf.c
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          #include "vmlinux.h"
+          #include <bpf/bpf_helpers.h>
+          #include <bpf/bpf_tracing.h>
+          #include <bpf/bpf_endian.h>
+
+          #ifndef AF_INET
+          #define AF_INET 2
+          #endif
+
+          char LICENSE[] SEC("license") = "GPL";
+
+          struct connect_event {
+              __u32 pid;
+              char comm[16];
+              __u8 daddr[4];
+              __u16 dport;
+              __u16 pad;
+          };
+
+          struct {
+              __uint(type, BPF_MAP_TYPE_RINGBUF);
+              __uint(max_entries, 1 << 24);
+          } events SEC(".maps");
+
+          SEC("kprobe/tcp_v4_connect")
+          int BPF_KPROBE(handle_tcp_v4_connect, struct sock *sk, struct sockaddr *uaddr, int addr_len)
+          {
+              struct sockaddr_in addr = {};
+              struct connect_event *event;
+
+              if (!uaddr)
+                  return 0;
+
+              if (bpf_probe_read_kernel(&addr, sizeof(addr), uaddr) < 0)
+                  return 0;
+
+              if (addr.sin_family != AF_INET)
+                  return 0;
+
+              event = bpf_ringbuf_reserve(&events, sizeof(*event), 0);
+              if (!event)
+                  return 0;
+
+              event->pid = bpf_get_current_pid_tgid() >> 32;
+              bpf_get_current_comm(&event->comm, sizeof(event->comm));
+
+              __builtin_memcpy(event->daddr, &addr.sin_addr.s_addr, 4);
+              event->dport = bpf_ntohs(addr.sin_port);
+              event->pad = 0;
+
+              bpf_ringbuf_submit(event, 0);
+              return 0;
+          }
+
+    - name: Create native Go ring buffer reader
+      ansible.builtin.copy:
+        dest: /opt/sdn-lab/ebpf/native-agent/cmd/sdn-ebpf-native-agent/main.go
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          package main
+
+          import (
+            "bytes"
+            "encoding/binary"
+            "encoding/json"
+            "flag"
+            "fmt"
+            "io"
+            "net"
+            "net/http"
+            "os"
+            "path/filepath"
+            "strings"
+            "time"
+
+            "github.com/cilium/ebpf/link"
+            "github.com/cilium/ebpf/ringbuf"
+          )
+
+          //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall" bpf ../../bpf/tcpconnect.bpf.c -- -I../../bpf -I/usr/include/bpf
+
+          type FlowRule struct {
+            Segment   string `json:"segment"`
+            DstIP     string `json:"dst_ip"`
+            DstPort   int    `json:"dst_port,omitempty"`
+            FlowClass string `json:"flow_class"`
+          }
+
+          type Config struct {
+            Version       string     `json:"version"`
+            Host          string     `json:"host"`
+            Segment       string     `json:"segment"`
+            CollectorURL  string     `json:"collector_url"`
+            LocalEventLog string     `json:"local_event_log"`
+            StateFile     string     `json:"state_file"`
+            OverlayPrefix string     `json:"overlay_prefix"`
+            FlowRules     []FlowRule `json:"flow_rules"`
+          }
+
+          type bpfConnectEvent struct {
+            PID   uint32
+            Comm  [16]byte
+            Daddr [4]byte
+            Dport uint16
+            Pad   uint16
+          }
+
+          type Event struct {
+            EventType          string `json:"event_type"`
+            Timestamp          string `json:"timestamp"`
+            Host               string `json:"host"`
+            Segment            string `json:"segment"`
+            PID                int    `json:"pid"`
+            Comm               string `json:"comm"`
+            DstIP              string `json:"dst_ip"`
+            DstPort            int    `json:"dst_port"`
+            FlowClass          string `json:"flow_class"`
+            Source             string `json:"source"`
+            AgentConfigVersion string `json:"agent_config_version"`
+          }
+
+          type State struct {
+            Status          string  `json:"status"`
+            UpdatedAt       string  `json:"updated_at"`
+            Host            string  `json:"host"`
+            Segment         string  `json:"segment"`
+            Runtime         string  `json:"runtime"`
+            EventCount      int     `json:"event_count"`
+            LastEvent       *Event  `json:"last_event"`
+            LastPostSuccess bool    `json:"last_post_success"`
+            LastError       *string `json:"last_error"`
+          }
+
+          func utcNow() string {
+            return time.Now().UTC().Format(time.RFC3339Nano)
+          }
+
+          func loadConfig(path string) (Config, error) {
+            raw, err := os.ReadFile(path)
+            if err != nil {
+              return Config{}, err
+            }
+
+            var cfg Config
+            if err := json.Unmarshal(raw, &cfg); err != nil {
+              return Config{}, err
+            }
+
+            if cfg.OverlayPrefix == "" {
+              cfg.OverlayPrefix = "172.31.210."
+            }
+
+            return cfg, nil
+          }
+
+          func commToString(comm [16]byte) string {
+            n := bytes.IndexByte(comm[:], 0)
+            if n == -1 {
+              n = len(comm)
+            }
+            return string(comm[:n])
+          }
+
+          func classifyFlow(cfg Config, dstIP string, dstPort int) string {
+            for _, rule := range cfg.FlowRules {
+              if rule.Segment != cfg.Segment {
+                continue
+              }
+              if rule.DstIP != dstIP {
+                continue
+              }
+              if rule.DstPort != 0 && rule.DstPort != dstPort {
+                continue
+              }
+              return rule.FlowClass
+            }
+
+            return "unknown"
+          }
+
+          func appendLocal(path string, event Event) error {
+            if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+              return err
+            }
+
+            f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+            if err != nil {
+              return err
+            }
+            defer f.Close()
+
+            raw, err := json.Marshal(event)
+            if err != nil {
+              return err
+            }
+
+            _, err = f.Write(append(raw, '\n'))
+            return err
+          }
+
+          func writeState(path string, state State) {
+            _ = os.MkdirAll(filepath.Dir(path), 0755)
+            state.UpdatedAt = utcNow()
+            raw, _ := json.MarshalIndent(state, "", "  ")
+            _ = os.WriteFile(path, raw, 0644)
+          }
+
+          func postEvent(url string, event Event) error {
+            raw, err := json.Marshal(event)
+            if err != nil {
+              return err
+            }
+
+            req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(raw))
+            if err != nil {
+              return err
+            }
+
+            req.Header.Set("Content-Type", "application/json")
+
+            client := http.Client{Timeout: 5 * time.Second}
+            resp, err := client.Do(req)
+            if err != nil {
+              return err
+            }
+            defer resp.Body.Close()
+
+            _, _ = io.ReadAll(resp.Body)
+
+            if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+              return fmt.Errorf("collector returned status %d", resp.StatusCode)
+            }
+
+            return nil
+          }
+
+          func main() {
+            configPath := flag.String("config", "/etc/sdn-ebpf-agent/config.json", "config path")
+            oneshot := flag.Bool("oneshot", false, "exit after first accepted event")
+            timeout := flag.Duration("timeout", 30*time.Second, "max runtime for oneshot")
+            flag.Parse()
+
+            cfg, err := loadConfig(*configPath)
+            if err != nil {
+              fmt.Fprintf(os.Stderr, "CONFIG_LOAD_FAILED error=%v\n", err)
+              os.Exit(1)
+            }
+
+            statePath := "/opt/sdn-lab/ebpf/state/native_agent_state.json"
+            localEventLog := "/opt/sdn-lab/ebpf/events/native-agent-events.jsonl"
+
+            state := State{
+              Status:     "starting",
+              Host:       cfg.Host,
+              Segment:    cfg.Segment,
+              Runtime:    "native-go-ebpf-ringbuf-canary",
+              EventCount: 0,
+            }
+            writeState(statePath, state)
+
+            var objs bpfObjects
+            if err := loadBpfObjects(&objs, nil); err != nil {
+              fmt.Fprintf(os.Stderr, "BPF_LOAD_FAILED error=%v\n", err)
+              os.Exit(1)
+            }
+            defer objs.Close()
+
+            kp, err := link.Kprobe("tcp_v4_connect", objs.HandleTcpV4Connect, nil)
+            if err != nil {
+              fmt.Fprintf(os.Stderr, "KPROBE_ATTACH_FAILED error=%v\n", err)
+              os.Exit(1)
+            }
+            defer kp.Close()
+
+            reader, err := ringbuf.NewReader(objs.Events)
+            if err != nil {
+              fmt.Fprintf(os.Stderr, "RINGBUF_READER_FAILED error=%v\n", err)
+              os.Exit(1)
+            }
+            defer reader.Close()
+
+            state.Status = "running"
+            writeState(statePath, state)
+
+            fmt.Printf("SDN_NATIVE_EBPF_AGENT_START host=%s segment=%s collector=%s\n", cfg.Host, cfg.Segment, cfg.CollectorURL)
+
+            deadline := time.Now().Add(*timeout)
+
+            for {
+              if *oneshot && time.Now().After(deadline) {
+                fmt.Println("SDN_NATIVE_EBPF_AGENT_TIMEOUT")
+                os.Exit(2)
+              }
+
+              record, err := reader.Read()
+              if err != nil {
+                if strings.Contains(err.Error(), "closed") {
+                  return
+                }
+                continue
+              }
+
+              var rawEvent bpfConnectEvent
+              if err := binary.Read(bytes.NewBuffer(record.RawSample), binary.LittleEndian, &rawEvent); err != nil {
+                continue
+              }
+
+              dstIP := net.IPv4(rawEvent.Daddr[0], rawEvent.Daddr[1], rawEvent.Daddr[2], rawEvent.Daddr[3]).String()
+              dstPort := int(rawEvent.Dport)
+
+              if !strings.HasPrefix(dstIP, cfg.OverlayPrefix) {
+                continue
+              }
+
+              flowClass := classifyFlow(cfg, dstIP, dstPort)
+              if flowClass == "unknown" {
+                continue
+              }
+
+              event := Event{
+                EventType:          "tcp_connect",
+                Timestamp:          utcNow(),
+                Host:               cfg.Host,
+                Segment:            cfg.Segment,
+                PID:                int(rawEvent.PID),
+                Comm:               commToString(rawEvent.Comm),
+                DstIP:              dstIP,
+                DstPort:            dstPort,
+                FlowClass:          flowClass,
+                Source:             "sdn-ebpf-go-agent:native-ringbuf-v1:kprobe:tcp_v4_connect",
+                AgentConfigVersion: cfg.Version,
+              }
+
+              _ = appendLocal(localEventLog, event)
+
+              sent := true
+              if err := postEvent(cfg.CollectorURL, event); err != nil {
+                sent = false
+                msg := err.Error()
+                state.LastError = &msg
+                state.LastPostSuccess = false
+              } else {
+                state.LastError = nil
+                state.LastPostSuccess = true
+              }
+
+              state.EventCount++
+              state.LastEvent = &event
+              writeState(statePath, state)
+
+              out, _ := json.Marshal(map[string]any{
+                "sent": sent,
+                "host": cfg.Host,
+                "flow_class": event.FlowClass,
+                "dst_ip": event.DstIP,
+                "dst_port": event.DstPort,
+                "comm": event.Comm,
+              })
+
+              fmt.Println("SDN_NATIVE_EBPF_EVENT_SENT " + string(out))
+
+              if *oneshot && sent {
+                return
+              }
+            }
+          }
+
+    - name: Build native Go eBPF canary
+      ansible.builtin.shell: |
+        set -euo pipefail
+
+        cd /opt/sdn-lab/ebpf/native-agent
+        go mod tidy
+
+        cd /opt/sdn-lab/ebpf/native-agent/cmd/sdn-ebpf-native-agent
+        go generate
+        go build -o /opt/sdn-lab/ebpf/native-agent/sdn-ebpf-native-agent .
+
+        test -x /opt/sdn-lab/ebpf/native-agent/sdn-ebpf-native-agent
+        echo "NATIVE_GO_EBPF_CANARY_BUILD_PASS"
+      args:
+        executable: /bin/bash
+      register: native_build
+      changed_when: true
+
+    - name: Show native build result
+      ansible.builtin.debug:
+        var: native_build.stdout_lines
+
+    - name: Create native eBPF canary systemd service
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/sdn-ebpf-native-agent.service
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=SDN Lab Native Go eBPF Agent Canary
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=simple
+          User=root
+          Group=root
+          ExecStart=/opt/sdn-lab/ebpf/native-agent/sdn-ebpf-native-agent --config /etc/sdn-ebpf-agent/config.json --oneshot --timeout 30s
+          Restart=no
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Keep native eBPF canary disabled by default
+      ansible.builtin.systemd:
+        name: sdn-ebpf-native-agent
+        daemon_reload: true
+        enabled: false
+        state: stopped

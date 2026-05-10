@@ -1,0 +1,401 @@
+- name: Deploy mock database service
+  hosts: db
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Install DB mock dependencies
+      ansible.builtin.apt:
+        name:
+          - python3
+          - python3-venv
+          - python3-pip
+          - curl
+          - jq
+        state: present
+        update_cache: true
+
+    - name: Create mock DB directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: automation
+        group: automation
+        mode: "0755"
+      loop:
+        - /opt/sdn-lab
+        - /opt/sdn-lab/mock-db
+
+    - name: Create mock DB FastAPI app
+      ansible.builtin.copy:
+        dest: /opt/sdn-lab/mock-db/app.py
+        owner: automation
+        group: automation
+        mode: "0644"
+        content: |
+          from fastapi import FastAPI
+          from datetime import datetime
+
+          app = FastAPI(title="SDN Lab Mock DB Service")
+
+          @app.get("/health")
+          def health():
+              return {
+                  "service": "mock-db",
+                  "status": "ok",
+                  "role": "database",
+                  "timestamp": datetime.utcnow().isoformat() + "Z"
+              }
+
+          @app.get("/query")
+          def query():
+              return {
+                  "service": "mock-db",
+                  "result": "mock-query-ok",
+                  "rows": [
+                      {"id": 1, "name": "web-api-db-flow"},
+                      {"id": 2, "name": "sdn-microsegmentation-demo"}
+                  ]
+              }
+
+    - name: Create DB Python virtualenv
+      become_user: automation
+      ansible.builtin.command:
+        cmd: python3 -m venv /opt/sdn-lab/mock-db/.venv
+        creates: /opt/sdn-lab/mock-db/.venv/bin/python
+
+    - name: Install DB Python packages
+      become_user: automation
+      ansible.builtin.shell: |
+        set -e
+        /opt/sdn-lab/mock-db/.venv/bin/pip install --upgrade pip
+        /opt/sdn-lab/mock-db/.venv/bin/pip install fastapi uvicorn
+      args:
+        executable: /bin/bash
+
+    - name: Create mock DB systemd service
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/sdn-mock-db.service
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=SDN Lab Mock DB Service
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=simple
+          User=automation
+          Group=automation
+          WorkingDirectory=/opt/sdn-lab/mock-db
+          ExecStart=/opt/sdn-lab/mock-db/.venv/bin/uvicorn app:app --host 0.0.0.0 --port 5432
+          Restart=on-failure
+          RestartSec=3
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Enable and start mock DB service
+      ansible.builtin.systemd:
+        name: sdn-mock-db
+        daemon_reload: true
+        enabled: true
+        state: restarted
+
+
+- name: Deploy API service
+  hosts: api
+  become: true
+  gather_facts: true
+
+  vars:
+    db_url: "http://10.60.10.33:15432"
+
+  tasks:
+    - name: Install API dependencies
+      ansible.builtin.apt:
+        name:
+          - python3
+          - python3-venv
+          - python3-pip
+          - curl
+          - jq
+        state: present
+        update_cache: true
+
+    - name: Create API directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: automation
+        group: automation
+        mode: "0755"
+      loop:
+        - /opt/sdn-lab
+        - /opt/sdn-lab/api-service
+
+    - name: Create API FastAPI app
+      ansible.builtin.copy:
+        dest: /opt/sdn-lab/api-service/app.py
+        owner: automation
+        group: automation
+        mode: "0644"
+        content: |
+          import os
+          import requests
+          from fastapi import FastAPI
+          from datetime import datetime
+
+          DB_URL = os.getenv("DB_URL", "http://10.60.10.33:15432")
+
+          app = FastAPI(title="SDN Lab API Service")
+
+          @app.get("/health")
+          def health():
+              return {
+                  "service": "api",
+                  "status": "ok",
+                  "role": "application-api",
+                  "db_url": DB_URL,
+                  "timestamp": datetime.utcnow().isoformat() + "Z"
+              }
+
+          @app.get("/db-check")
+          def db_check():
+              try:
+                  r = requests.get(f"{DB_URL}/health", timeout=2)
+                  return {
+                      "service": "api",
+                      "db_reachable": True,
+                      "db_status_code": r.status_code,
+                      "db_response": r.json()
+                  }
+              except Exception as e:
+                  return {
+                      "service": "api",
+                      "db_reachable": False,
+                      "error": str(e)
+                  }
+
+          @app.get("/data")
+          def data():
+              try:
+                  r = requests.get(f"{DB_URL}/query", timeout=2)
+                  return {
+                      "service": "api",
+                      "source": "mock-db",
+                      "data": r.json()
+                  }
+              except Exception as e:
+                  return {
+                      "service": "api",
+                      "source": "mock-db",
+                      "error": str(e)
+                  }
+
+    - name: Create API Python virtualenv
+      become_user: automation
+      ansible.builtin.command:
+        cmd: python3 -m venv /opt/sdn-lab/api-service/.venv
+        creates: /opt/sdn-lab/api-service/.venv/bin/python
+
+    - name: Install API Python packages
+      become_user: automation
+      ansible.builtin.shell: |
+        set -e
+        /opt/sdn-lab/api-service/.venv/bin/pip install --upgrade pip
+        /opt/sdn-lab/api-service/.venv/bin/pip install fastapi uvicorn requests
+      args:
+        executable: /bin/bash
+
+    - name: Create API environment file
+      ansible.builtin.copy:
+        dest: /etc/sdn-api-service.env
+        owner: root
+        group: automation
+        mode: "0640"
+        content: |
+          DB_URL={{ db_url }}
+
+    - name: Create API systemd service
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/sdn-api.service
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=SDN Lab API Service
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=simple
+          User=automation
+          Group=automation
+          WorkingDirectory=/opt/sdn-lab/api-service
+          EnvironmentFile=/etc/sdn-api-service.env
+          ExecStart=/opt/sdn-lab/api-service/.venv/bin/uvicorn app:app --host 0.0.0.0 --port 18080
+          Restart=on-failure
+          RestartSec=3
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Enable and start API service
+      ansible.builtin.systemd:
+        name: sdn-api
+        daemon_reload: true
+        enabled: true
+        state: restarted
+
+
+- name: Deploy web frontend
+  hosts: web
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Install Nginx and tools
+      ansible.builtin.apt:
+        name:
+          - nginx
+          - curl
+          - jq
+        state: present
+        update_cache: true
+
+    - name: Create web root
+      ansible.builtin.file:
+        path: /var/www/sdn-lab
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: "0755"
+
+    - name: Create web index page
+      ansible.builtin.copy:
+        dest: /var/www/sdn-lab/index.html
+        owner: www-data
+        group: www-data
+        mode: "0644"
+        content: |
+          <!doctype html>
+          <html>
+          <head>
+            <title>SDN Lab Web</title>
+          </head>
+          <body>
+            <h1>SDN Lab Web Workload</h1>
+            <p>web -> api -> db traffic generator endpoint is ready.</p>
+            <ul>
+              <li><a href="/api/health">API Health</a></li>
+              <li><a href="/api/db-check">API DB Check</a></li>
+              <li><a href="/api/data">API Data</a></li>
+            </ul>
+          </body>
+          </html>
+
+    - name: Configure Nginx SDN lab site
+      ansible.builtin.copy:
+        dest: /etc/nginx/sites-available/sdn-lab
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          server {
+              listen 80 default_server;
+              server_name _;
+
+              root /var/www/sdn-lab;
+              index index.html;
+
+              location / {
+                  try_files $uri $uri/ =404;
+              }
+
+              location /api/ {
+                  proxy_pass http://10.60.10.32:18080/;
+                  proxy_set_header Host $host;
+                  proxy_set_header X-Real-IP $remote_addr;
+                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+              }
+
+              location /health {
+                  return 200 '{"service":"web","status":"ok","role":"frontend"}';
+                  add_header Content-Type application/json;
+              }
+          }
+
+    - name: Enable SDN lab Nginx site
+      ansible.builtin.file:
+        src: /etc/nginx/sites-available/sdn-lab
+        dest: /etc/nginx/sites-enabled/sdn-lab
+        state: link
+        force: true
+
+    - name: Remove default Nginx site
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+
+    - name: Validate Nginx config
+      ansible.builtin.command: nginx -t
+
+    - name: Enable and restart Nginx
+      ansible.builtin.systemd:
+        name: nginx
+        enabled: true
+        state: restarted
+
+
+- name: Prepare bulk traffic generator
+  hosts: bulk
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Install bulk traffic tools
+      ansible.builtin.apt:
+        name:
+          - curl
+          - jq
+          - iperf3
+          - hping3
+          - tcpdump
+        state: present
+        update_cache: true
+
+    - name: Create traffic directory
+      ansible.builtin.file:
+        path: /opt/sdn-lab/traffic
+        state: directory
+        owner: automation
+        group: automation
+        mode: "0755"
+
+    - name: Create basic traffic script
+      ansible.builtin.copy:
+        dest: /opt/sdn-lab/traffic/run-basic-traffic.sh
+        owner: automation
+        group: automation
+        mode: "0755"
+        content: |
+          #!/usr/bin/env bash
+          set -euo pipefail
+
+          echo "[bulk] web health"
+          curl -s http://10.60.10.31/health | jq || true
+
+          echo "[bulk] api health"
+          curl -s http://10.60.10.32:18080/health | jq || true
+
+          echo "[bulk] api db-check"
+          curl -s http://10.60.10.32:18080/db-check | jq || true
+
+          echo "[bulk] direct db health"
+          curl -s http://10.60.10.33:15432/health | jq || true
+
+          echo "[bulk] done"

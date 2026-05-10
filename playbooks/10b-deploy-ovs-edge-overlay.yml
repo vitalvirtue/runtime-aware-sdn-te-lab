@@ -1,0 +1,139 @@
+- name: Configure VXLAN endpoints on workload VMs
+  hosts: workloads
+  become: true
+  gather_facts: false
+
+  vars:
+    edge_underlay_ip: "10.60.20.21"
+    vxlan_id: 100
+    vxlan_name: "vxlan-edge0"
+    overlay_map:
+      lab-sdn-app-web-01: "172.31.200.11/24"
+      lab-sdn-app-api-01: "172.31.200.12/24"
+      lab-sdn-data-db-01: "172.31.200.13/24"
+      lab-sdn-app-bulk-01: "172.31.200.14/24"
+
+  tasks:
+    - name: Install VXLAN tools
+      ansible.builtin.apt:
+        name:
+          - iproute2
+          - iputils-ping
+          - curl
+          - jq
+          - tcpdump
+        state: present
+        update_cache: true
+
+    - name: Configure workload VXLAN interface to edge-a
+      ansible.builtin.shell: |
+        set -euo pipefail
+
+        VX="{{ vxlan_name }}"
+        EDGE="{{ edge_underlay_ip }}"
+        VNI="{{ vxlan_id }}"
+        OVERLAY="{{ overlay_map[inventory_hostname] }}"
+
+        LOCAL_UNDERLAY="$(ip -4 route get "$EDGE" | awk '{for(i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}')"
+        DEV="$(ip -4 route get "$EDGE" | awk '{for(i=1;i<=NF;i++) if ($i=="dev") {print $(i+1); exit}}')"
+
+        ip link del "$VX" >/dev/null 2>&1 || true
+
+        ip link add "$VX" type vxlan \
+          id "$VNI" \
+          local "$LOCAL_UNDERLAY" \
+          remote "$EDGE" \
+          dstport 4789 \
+          dev "$DEV"
+
+        ip addr add "$OVERLAY" dev "$VX"
+        ip link set "$VX" mtu 1450
+        ip link set "$VX" up
+
+        echo "VXLAN_WORKLOAD_READY host=$(hostname) local_underlay=${LOCAL_UNDERLAY} dev=${DEV} overlay=${OVERLAY}"
+      args:
+        executable: /bin/bash
+      register: vxlan_workload
+
+    - name: Show workload VXLAN result
+      ansible.builtin.debug:
+        var: vxlan_workload.stdout_lines
+
+
+- name: Configure OVS VXLAN ports and policy on edge-a
+  hosts: lab-sdn-edge-ovs-a-01
+  become: true
+  gather_facts: false
+
+  vars:
+    bridge: br-edge0
+    vxlan_id: 100
+
+  tasks:
+    - name: Ensure OVS bridge exists
+      ansible.builtin.command: "ovs-vsctl --may-exist add-br {{ bridge }}"
+      changed_when: false
+
+    - name: Configure OVS bridge baseline
+      ansible.builtin.shell: |
+        set -e
+        ovs-vsctl set bridge {{ bridge }} protocols=OpenFlow13
+        ovs-vsctl set-fail-mode {{ bridge }} standalone
+      args:
+        executable: /bin/bash
+
+    - name: Remove old VXLAN ports
+      ansible.builtin.shell: |
+        set -e
+        for p in vxlan-web vxlan-api vxlan-db vxlan-bulk; do
+          ovs-vsctl --if-exists del-port {{ bridge }} "$p"
+        done
+      args:
+        executable: /bin/bash
+
+    - name: Create OVS VXLAN ports toward workload VMs
+      ansible.builtin.shell: |
+        set -e
+
+        ovs-vsctl --may-exist add-port {{ bridge }} vxlan-web \
+          -- set interface vxlan-web type=vxlan options:key={{ vxlan_id }} options:remote_ip=10.60.20.31 options:dst_port=4789
+
+        ovs-vsctl --may-exist add-port {{ bridge }} vxlan-api \
+          -- set interface vxlan-api type=vxlan options:key={{ vxlan_id }} options:remote_ip=10.60.20.32 options:dst_port=4789
+
+        ovs-vsctl --may-exist add-port {{ bridge }} vxlan-db \
+          -- set interface vxlan-db type=vxlan options:key={{ vxlan_id }} options:remote_ip=10.60.20.33 options:dst_port=4789
+
+        ovs-vsctl --may-exist add-port {{ bridge }} vxlan-bulk \
+          -- set interface vxlan-bulk type=vxlan options:key={{ vxlan_id }} options:remote_ip=10.60.20.34 options:dst_port=4789
+      args:
+        executable: /bin/bash
+
+    - name: Install OpenFlow micro-segmentation policy
+      ansible.builtin.shell: |
+        set -e
+
+        ovs-ofctl -O OpenFlow13 del-flows {{ bridge }}
+
+        # Allow ARP so overlay hosts can resolve each other.
+        ovs-ofctl -O OpenFlow13 add-flow {{ bridge }} "priority=200,arp,actions=NORMAL"
+
+        # Allow WEB <-> API.
+        ovs-ofctl -O OpenFlow13 add-flow {{ bridge }} "priority=300,ip,nw_src=172.31.200.11,nw_dst=172.31.200.12,actions=NORMAL"
+        ovs-ofctl -O OpenFlow13 add-flow {{ bridge }} "priority=300,ip,nw_src=172.31.200.12,nw_dst=172.31.200.11,actions=NORMAL"
+
+        # Allow API <-> DB.
+        ovs-ofctl -O OpenFlow13 add-flow {{ bridge }} "priority=300,ip,nw_src=172.31.200.12,nw_dst=172.31.200.13,actions=NORMAL"
+        ovs-ofctl -O OpenFlow13 add-flow {{ bridge }} "priority=300,ip,nw_src=172.31.200.13,nw_dst=172.31.200.12,actions=NORMAL"
+
+        # Default deny.
+        ovs-ofctl -O OpenFlow13 add-flow {{ bridge }} "priority=0,actions=drop"
+
+        ovs-ofctl -O OpenFlow13 dump-flows {{ bridge }}
+      args:
+        executable: /bin/bash
+      register: ovs_overlay_flows
+
+    - name: Show OVS overlay flows
+      ansible.builtin.debug:
+        var: ovs_overlay_flows.stdout_lines

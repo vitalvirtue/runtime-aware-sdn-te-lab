@@ -1,0 +1,135 @@
+- name: Deploy OVS edge baseline
+  hosts: edge
+  become: true
+  gather_facts: true
+
+  vars:
+    edge_bridge_name: br-edge0
+    edge_datapath_ids:
+      lab-sdn-edge-ovs-a-01: "0000000000002201"
+      lab-sdn-edge-ovs-b-01: "0000000000002202"
+
+  tasks:
+    - name: Install OVS and troubleshooting tools
+      ansible.builtin.apt:
+        name:
+          - openvswitch-switch
+          - openvswitch-common
+          - iproute2
+          - iputils-ping
+          - tcpdump
+          - ethtool
+          - bridge-utils
+          - jq
+          - curl
+        state: present
+        update_cache: true
+
+    - name: Enable and start Open vSwitch service
+      ansible.builtin.systemd:
+        name: openvswitch-switch
+        enabled: true
+        state: started
+
+    - name: Create SDN edge directory
+      ansible.builtin.file:
+        path: /opt/sdn-lab/edge
+        state: directory
+        owner: automation
+        group: automation
+        mode: "0755"
+
+    - name: Create OVS edge bridge
+      ansible.builtin.command: "ovs-vsctl --may-exist add-br {{ edge_bridge_name }}"
+      changed_when: false
+
+    - name: Configure OVS bridge baseline
+      ansible.builtin.shell: |
+        set -e
+        ovs-vsctl set bridge {{ edge_bridge_name }} protocols=OpenFlow13
+        ovs-vsctl set-fail-mode {{ edge_bridge_name }} standalone
+        ovs-vsctl set bridge {{ edge_bridge_name }} other-config:datapath-id={{ edge_datapath_ids[inventory_hostname] }}
+        ovs-vsctl set bridge {{ edge_bridge_name }} external_ids:sdn-lab-role=edge
+        ovs-vsctl set bridge {{ edge_bridge_name }} external_ids:sdn-lab-node={{ inventory_hostname }}
+      args:
+        executable: /bin/bash
+
+    - name: Create local OVS smoke test script
+      ansible.builtin.copy:
+        dest: /opt/sdn-lab/edge/ovs-local-smoke.sh
+        owner: automation
+        group: automation
+        mode: "0755"
+        content: |
+          #!/usr/bin/env bash
+          set -euo pipefail
+
+          BR="br-edge0"
+          NS1="ovs-smoke-a"
+          NS2="ovs-smoke-b"
+          P1="ovs-smoke-a"
+          P2="ovs-smoke-b"
+          V1="veth-a"
+          V2="veth-b"
+
+          cleanup() {
+            ovs-vsctl --if-exists del-port "$BR" "$P1" >/dev/null 2>&1 || true
+            ovs-vsctl --if-exists del-port "$BR" "$P2" >/dev/null 2>&1 || true
+            ip netns del "$NS1" >/dev/null 2>&1 || true
+            ip netns del "$NS2" >/dev/null 2>&1 || true
+            ip link del "$P1" >/dev/null 2>&1 || true
+            ip link del "$P2" >/dev/null 2>&1 || true
+          }
+
+          trap cleanup EXIT
+
+          cleanup
+
+          ip netns add "$NS1"
+          ip netns add "$NS2"
+
+          ip link add "$P1" type veth peer name "$V1"
+          ip link add "$P2" type veth peer name "$V2"
+
+          ovs-vsctl --may-exist add-port "$BR" "$P1"
+          ovs-vsctl --may-exist add-port "$BR" "$P2"
+
+          ip link set "$P1" up
+          ip link set "$P2" up
+
+          ip link set "$V1" netns "$NS1"
+          ip link set "$V2" netns "$NS2"
+
+          ip netns exec "$NS1" ip link set lo up
+          ip netns exec "$NS2" ip link set lo up
+
+          ip netns exec "$NS1" ip addr add 172.31.90.1/24 dev "$V1"
+          ip netns exec "$NS2" ip addr add 172.31.90.2/24 dev "$V2"
+
+          ip netns exec "$NS1" ip link set "$V1" up
+          ip netns exec "$NS2" ip link set "$V2" up
+
+          echo "[ovs-smoke] bridge status"
+          ovs-vsctl show
+
+          echo "[ovs-smoke] ports"
+          ovs-ofctl -O OpenFlow13 show "$BR"
+
+          echo "[ovs-smoke] ping ns1 -> ns2"
+          ip netns exec "$NS1" ping -c 3 -W 1 172.31.90.2
+
+          echo "OVS_EDGE_LOCAL_SMOKE_PASS"
+
+    - name: Show OVS baseline
+      ansible.builtin.shell: |
+        set -e
+        ovs-vsctl show
+        ovs-vsctl get bridge {{ edge_bridge_name }} protocols
+        ovs-vsctl get-fail-mode {{ edge_bridge_name }}
+      args:
+        executable: /bin/bash
+      register: ovs_baseline
+
+    - name: Print OVS baseline
+      ansible.builtin.debug:
+        var: ovs_baseline.stdout_lines

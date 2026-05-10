@@ -1,0 +1,30 @@
+- name: Verify TE decision under critical path degradation
+  hosts: control
+  gather_facts: false
+
+  tasks:
+    - name: Evaluate TE decision under degraded critical path
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8091/decision/evaluate
+        method: POST
+        return_content: true
+      register: decision_eval
+
+    - name: Parse decision
+      ansible.builtin.set_fact:
+        decision_json: "{{ decision_eval.content | from_json }}"
+
+    - name: Show degraded-path decision
+      ansible.builtin.debug:
+        var: decision_json
+
+    - name: Assert degraded path decision baseline
+      ansible.builtin.assert:
+        that:
+          - decision_json.status == "ok"
+          - decision_json.decision.mode == "dry-run"
+          - decision_json.decision.observed.critical_api_to_db_avg_seconds | float > 0.05
+          - decision_json.decision.observed.bulk_to_api_avg_seconds | float > 0
+          - decision_json.decision.action == "recommend_shift_critical_to_path2"
+        success_msg: "TE_DECISION_RECOMMEND_SHIFT_CRITICAL_TO_PATH2_PASS"
+        fail_msg: "TE decision engine did not recommend shifting critical traffic to path-2 under degradation."

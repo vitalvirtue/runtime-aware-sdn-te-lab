@@ -1,0 +1,159 @@
+- name: Clear central eBPF event store
+  hosts: control
+  gather_facts: false
+
+  tasks:
+    - name: Clear eBPF events
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8090/ebpf/events
+        method: DELETE
+        return_content: true
+
+
+- name: Verify Go eBPF agent as default service
+  hosts: workloads
+  become: true
+  gather_facts: false
+
+  vars:
+    expected_flow_class:
+      lab-sdn-app-web-01: "web_to_api"
+      lab-sdn-app-api-01: "critical_api_to_db"
+      lab-sdn-data-db-01: "db_to_api"
+      lab-sdn-app-bulk-01: "bulk_to_api"
+
+  tasks:
+    - name: Ensure default agent service is active
+      ansible.builtin.shell: |
+        set -euo pipefail
+        systemctl is-active sdn-ebpf-agent
+        systemctl cat sdn-ebpf-agent | grep -q '/opt/sdn-lab/ebpf/go-agent/sdn-ebpf-agent'
+        echo "GO_DEFAULT_AGENT_SERVICE_ACTIVE"
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Generate workload traffic for Go default agent
+      ansible.builtin.shell: |
+        set -euo pipefail
+
+        HOST="$(hostname)"
+
+        case "$HOST" in
+          lab-sdn-app-web-01)
+            curl -fsS http://172.31.210.12:18080/health >/dev/null
+            ;;
+          lab-sdn-app-api-01)
+            curl -fsS http://172.31.210.13:15432/health >/dev/null
+            ;;
+          lab-sdn-data-db-01)
+            curl -fsS http://172.31.210.12:18080/health >/dev/null
+            ;;
+          lab-sdn-app-bulk-01)
+            curl -fsS http://172.31.210.12:18080/health >/dev/null
+            ;;
+        esac
+
+        sleep 1
+
+        journalctl -u sdn-ebpf-agent -n 40 --no-pager
+      args:
+        executable: /bin/bash
+      register: go_default_journal
+      changed_when: true
+      failed_when: >
+        'SDN_GO_EBPF_STREAM_EVENT_SENT' not in go_default_journal.stdout or
+        expected_flow_class[inventory_hostname] not in go_default_journal.stdout
+
+    - name: Show Go default agent journal
+      ansible.builtin.debug:
+        var: go_default_journal.stdout_lines
+
+    - name: Read local agent state
+      ansible.builtin.slurp:
+        src: /opt/sdn-lab/ebpf/state/agent_state.json
+      register: state_raw
+
+    - name: Parse local agent state
+      ansible.builtin.set_fact:
+        agent_state: "{{ state_raw.content | b64decode | from_json }}"
+
+    - name: Assert Go default local state
+      ansible.builtin.assert:
+        that:
+          - agent_state.runtime == "go-bpftrace-stream-default"
+          - agent_state.host == inventory_hostname
+          - agent_state.last_post_success == true
+          - agent_state.last_event.flow_class == expected_flow_class[inventory_hostname]
+          - agent_state.last_event.source == "sdn-ebpf-go-agent:default-v1:bpftrace:kprobe:tcp_v4_connect"
+        success_msg: "GO_EBPF_DEFAULT_AGENT_LOCAL_STATE_PASS {{ inventory_hostname }}"
+        fail_msg: "Go default agent local state validation failed."
+
+
+- name: Verify Go default events in collector
+  hosts: control
+  gather_facts: false
+
+  tasks:
+    - name: Read current eBPF events
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8090/ebpf/events/current?limit=100
+        method: GET
+        return_content: true
+      register: current_events
+      until: >
+        ((current_events.content | from_json).count | int) >= 4
+      retries: 10
+      delay: 2
+
+    - name: Parse current events
+      ansible.builtin.set_fact:
+        ebpf_state: "{{ current_events.content | from_json }}"
+
+    - name: Extract event attributes
+      ansible.builtin.set_fact:
+        flow_classes: "{{ ebpf_state.events | map(attribute='flow_class') | list }}"
+        sources: "{{ ebpf_state.events | map(attribute='source') | list }}"
+
+    - name: Show central Go default telemetry
+      ansible.builtin.debug:
+        msg:
+          count: "{{ ebpf_state.count }}"
+          flow_classes: "{{ flow_classes }}"
+          sources: "{{ sources }}"
+
+    - name: Assert Go default telemetry in collector
+      ansible.builtin.assert:
+        that:
+          - ebpf_state.status == "ok"
+          - ebpf_state.count | int >= 4
+          - "'web_to_api' in flow_classes"
+          - "'critical_api_to_db' in flow_classes"
+          - "'db_to_api' in flow_classes"
+          - "'bulk_to_api' in flow_classes"
+          - "'sdn-ebpf-go-agent:default-v1:bpftrace:kprobe:tcp_v4_connect' in sources"
+        success_msg: "GO_EBPF_DEFAULT_AGENT_COLLECTOR_PASS"
+        fail_msg: "Go default agent collector validation failed."
+
+    - name: Verify agent health API sees Go default events
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8090/ebpf/agents/status?stale_after_seconds=120
+        method: GET
+        return_content: true
+      register: agent_health_response
+
+    - name: Parse agent health
+      ansible.builtin.set_fact:
+        agent_health: "{{ agent_health_response.content | from_json }}"
+
+    - name: Assert agent health remains healthy
+      ansible.builtin.assert:
+        that:
+          - agent_health.summary.healthy | int >= 4
+          - agent_health.summary.missing | int == 0
+        success_msg: "GO_EBPF_DEFAULT_AGENT_HEALTH_PASS"
+        fail_msg: "Agent health API did not remain healthy after Go default promotion."
+
+    - name: Mark milestone 14F passed
+      ansible.builtin.debug:
+        msg: "SDN_GO_EBPF_AGENT_DEFAULT_PROMOTION_PASS"

@@ -1,0 +1,58 @@
+- name: Install API packages
+  ansible.builtin.apt:
+    name:
+      - python3-flask
+    state: present
+
+- name: Ensure API work directory exists
+  ansible.builtin.file:
+    path: /opt/sdn-lab
+    state: directory
+    mode: '0755'
+
+- name: Deploy API app
+  ansible.builtin.copy:
+    dest: /opt/sdn-lab/api.py
+    mode: '0755'
+    content: |
+      from flask import Flask, jsonify
+      app = Flask(__name__)
+
+      @app.route("/")
+      def home():
+          return jsonify({"service": "lab-sdn-app-api-01", "status": "ok"})
+
+      @app.route("/health")
+      def health():
+          return jsonify({"healthy": True})
+
+      if __name__ == "__main__":
+          app.run(host="0.0.0.0", port=8080)
+
+- name: Deploy systemd service
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/lab-api.service
+    mode: '0644'
+    content: |
+      [Unit]
+      Description=Lab API Service
+      After=network.target
+
+      [Service]
+      User=root
+      WorkingDirectory=/opt/sdn-lab
+      ExecStart=/usr/bin/python3 /opt/sdn-lab/api.py
+      Restart=always
+
+      [Install]
+      WantedBy=multi-user.target
+
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: Enable API service
+  ansible.builtin.service:
+    name: lab-api
+    enabled: true
+    state: started

@@ -1,0 +1,118 @@
+- name: Deploy eBPF tcp_v4_connect bpftrace telemetry on workload nodes
+  hosts: workloads
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Ensure eBPF bpftrace dependencies
+      ansible.builtin.apt:
+        name:
+          - bpftrace
+          - bpftool
+          - curl
+          - jq
+          - iproute2
+        state: present
+        update_cache: true
+
+    - name: Create eBPF directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      loop:
+        - /opt/sdn-lab/ebpf
+        - /opt/sdn-lab/ebpf/scripts
+        - /opt/sdn-lab/ebpf/logs
+
+    - name: Create bpftrace tcp_v4_connect script
+      ansible.builtin.copy:
+        dest: /opt/sdn-lab/ebpf/scripts/tcp-v4-connect-ip-port.bt
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          BEGIN
+          {
+            printf("EBPF_TCP_V4_CONNECT_TRACE_START\n");
+          }
+
+          kprobe:tcp_v4_connect
+          /comm == "curl" || comm == "python3" || comm == "uvicorn" || comm == "nginx"/
+          {
+            $sk = (struct sock *)arg0;
+            $daddr = $sk->__sk_common.skc_daddr;
+            $dport = $sk->__sk_common.skc_dport;
+
+            /*
+             * skc_dport is stored in network byte order.
+             * Convert it manually to host order for readable output.
+             */
+            $dport_host = (($dport >> 8) & 0xff) | (($dport & 0xff) << 8);
+
+            printf("TCP_CONNECT pid=%d comm=%s daddr=%s dport=%d\n",
+              pid,
+              comm,
+              ntop($daddr),
+              $dport_host
+            );
+          }
+
+          END
+          {
+            printf("EBPF_TCP_V4_CONNECT_TRACE_END\n");
+          }
+
+    - name: Create bpftrace tcp_v4_connect runner
+      ansible.builtin.copy:
+        dest: /opt/sdn-lab/ebpf/run-tcp-v4-connect-ip-port.sh
+        owner: root
+        group: root
+        mode: "0755"
+        content: |
+          #!/usr/bin/env bash
+          set -euo pipefail
+
+          HOST="$(hostname)"
+          LOG="/opt/sdn-lab/ebpf/logs/tcp-v4-connect-ip-port.log"
+
+          rm -f "$LOG"
+
+          echo "EBPF_TCP_V4_CONNECT_HOST=$HOST"
+
+          if ! bpftrace -l 'kprobe:tcp_v4_connect' | grep -q 'kprobe:tcp_v4_connect'; then
+            echo "KPROBE_TCP_V4_CONNECT_MISSING"
+            exit 1
+          fi
+
+          timeout 12s bpftrace /opt/sdn-lab/ebpf/scripts/tcp-v4-connect-ip-port.bt > "$LOG" 2>&1 &
+          BPF_PID="$!"
+
+          sleep 4
+
+          case "$HOST" in
+            lab-sdn-app-web-01)
+              echo "GENERATE_TRAFFIC web->api expected_daddr=172.31.210.12 expected_dport=18080"
+              curl -fsS http://172.31.210.12:18080/health >/dev/null || true
+              ;;
+            lab-sdn-app-api-01)
+              echo "GENERATE_TRAFFIC api->db expected_daddr=172.31.210.13 expected_dport=15432"
+              curl -fsS http://172.31.210.13:15432/health >/dev/null || true
+              ;;
+            lab-sdn-data-db-01)
+              echo "GENERATE_TRAFFIC db->api expected_daddr=172.31.210.12 expected_dport=18080"
+              curl -fsS http://172.31.210.12:18080/health >/dev/null || true
+              ;;
+            lab-sdn-app-bulk-01)
+              echo "GENERATE_TRAFFIC bulk->api expected_daddr=172.31.210.12 expected_dport=18080"
+              curl -fsS http://172.31.210.12:18080/health >/dev/null || true
+              ;;
+          esac
+
+          sleep 2
+          wait "$BPF_PID" || true
+
+          echo "----- bpftrace tcp_v4_connect output -----"
+          cat "$LOG"

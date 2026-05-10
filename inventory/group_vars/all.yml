@@ -1,0 +1,103 @@
+pve_node: "pve"
+pve_storage: "local-lvm"
+pve_template_name: "debian12-template"
+ci_user: "automation"
+
+mgmt_bridge: "vmbr10"
+lab_bridge: "vmbr20"
+mgmt_gateway: "10.60.10.1"
+ssh_pubkey_file: "/home/automation/.ssh/id_ed25519.pub"
+
+common_packages:
+  - qemu-guest-agent
+  - curl
+  - wget
+  - git
+  - vim
+  - jq
+  - htop
+  - net-tools
+  - iproute2
+  - iputils-ping
+  - tcpdump
+  - traceroute
+  - netcat-openbsd
+  - ethtool
+  - python3
+  - python3-pip
+  - ca-certificates
+  - gnupg
+  - openssh-server
+
+lab_vms:
+  - vmid: 2101
+    name: lab-sdn-ctrl-onos-01
+    cores: 4
+    memory: 8192
+    disk_gb: 40
+    mgmt_ip: "10.60.10.11"
+    lab_ip: "10.60.20.11"
+    description: "ONOS controller node"
+
+  - vmid: 2102
+    name: lab-sdn-core-fabric-01
+    cores: 4
+    memory: 8192
+    disk_gb: 60
+    mgmt_ip: "10.60.10.12"
+    lab_ip: "10.60.20.12"
+    description: "Mininet BMv2 Stratum and P4 tooling node"
+
+  - vmid: 2201
+    name: lab-sdn-edge-ovs-a-01
+    cores: 2
+    memory: 2048
+    disk_gb: 20
+    mgmt_ip: "10.60.10.21"
+    lab_ip: "10.60.20.21"
+    description: "OVS edge node A"
+
+  - vmid: 2202
+    name: lab-sdn-edge-ovs-b-01
+    cores: 2
+    memory: 2048
+    disk_gb: 20
+    mgmt_ip: "10.60.10.22"
+    lab_ip: "10.60.20.22"
+    description: "OVS edge node B"
+
+  - vmid: 2301
+    name: lab-sdn-app-web-01
+    cores: 2
+    memory: 2048
+    disk_gb: 20
+    mgmt_ip: "10.60.10.31"
+    lab_ip: "10.60.20.31"
+    description: "Web workload node"
+
+  - vmid: 2302
+    name: lab-sdn-app-api-01
+    cores: 2
+    memory: 2048
+    disk_gb: 20
+    mgmt_ip: "10.60.10.32"
+    lab_ip: "10.60.20.32"
+    description: "API workload node"
+
+  - vmid: 2303
+    name: lab-sdn-data-db-01
+    cores: 2
+    memory: 4096
+    disk_gb: 30
+    mgmt_ip: "10.60.10.33"
+    lab_ip: "10.60.20.33"
+    description: "Database workload node"
+
+  - vmid: 2304
+    name: lab-sdn-app-bulk-01
+    cores: 2
+    memory: 2048
+    disk_gb: 20
+    mgmt_ip: "10.60.10.34"
+    lab_ip: "10.60.20.34"
+    description: "Bulk traffic workload node"

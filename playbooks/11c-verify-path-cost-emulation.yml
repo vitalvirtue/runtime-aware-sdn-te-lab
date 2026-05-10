@@ -1,0 +1,66 @@
+- name: Verify path cost / delay emulation
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Measure API -> DB critical path-1 latency
+      ansible.builtin.shell: |
+        set -e
+        ssh -o StrictHostKeyChecking=no automation@10.60.10.32 '
+          for i in $(seq 1 8); do
+            curl -o /dev/null -s -w "%{time_total}\n" http://172.31.210.13:15432/health
+          done
+        ' | awk '{sum+=$1; n++} END {if (n>0) printf "%.6f", sum/n; else print "0"}'
+      register: api_db_avg
+      changed_when: false
+
+    - name: Measure BULK -> API path-2 latency
+      ansible.builtin.shell: |
+        set -e
+        ssh -o StrictHostKeyChecking=no automation@10.60.10.34 '
+          for i in $(seq 1 8); do
+            curl -o /dev/null -s -w "%{time_total}\n" http://172.31.210.12:18080/health
+          done
+        ' | awk '{sum+=$1; n++} END {if (n>0) printf "%.6f", sum/n; else print "0"}'
+      register: bulk_api_avg
+      changed_when: false
+
+    - name: Show latency results
+      ansible.builtin.debug:
+        msg:
+          api_to_db_path1_avg_seconds: "{{ api_db_avg.stdout }}"
+          bulk_to_api_path2_avg_seconds: "{{ bulk_api_avg.stdout }}"
+
+    - name: Assert path-2 is more expensive than path-1
+      ansible.builtin.assert:
+        that:
+          - api_db_avg.stdout | float > 0
+          - bulk_api_avg.stdout | float > 0
+          - bulk_api_avg.stdout | float > api_db_avg.stdout | float + 0.10
+        success_msg: "TE_PATH_COST_EMULATION_PASS"
+        fail_msg: "Path-2 latency is not sufficiently higher than path-1 latency."
+
+
+- name: Show qdisc state on edge nodes
+  hosts: edge
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Show tc qdisc state
+      ansible.builtin.shell: |
+        echo "host=$(hostname)"
+        for dev in path1-to-b path2-to-b path1-to-a path2-to-a; do
+          if ip link show "$dev" >/dev/null 2>&1; then
+            echo "dev=$dev"
+            tc qdisc show dev "$dev"
+          fi
+        done
+      args:
+        executable: /bin/bash
+      register: tc_state
+      changed_when: false
+
+    - name: Print tc qdisc state
+      ansible.builtin.debug:
+        var: tc_state.stdout_lines

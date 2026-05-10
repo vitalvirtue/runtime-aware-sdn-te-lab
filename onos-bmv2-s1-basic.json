@@ -1,0 +1,5 @@
+{
+  "managementAddress": "grpc://10.60.10.12:50051?device_id=1",
+  "driver": "bmv2",
+  "pipeconf": "p4-tutorial-pipeconf"
+}

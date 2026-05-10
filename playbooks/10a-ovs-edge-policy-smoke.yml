@@ -1,0 +1,133 @@
+- name: Deploy OVS edge policy smoke test
+  hosts: edge
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Create OVS policy smoke script
+      ansible.builtin.copy:
+        dest: /opt/sdn-lab/edge/ovs-policy-smoke.sh
+        owner: automation
+        group: automation
+        mode: "0755"
+        content: |
+          #!/usr/bin/env bash
+          set -euo pipefail
+
+          BR="br-edge0"
+
+          NS_WEB="seg-web"
+          NS_API="seg-api"
+          NS_DB="seg-db"
+          NS_BULK="seg-bulk"
+
+          cleanup() {
+            for p in web-br api-br db-br bulk-br; do
+              ovs-vsctl --if-exists del-port "$BR" "$p" >/dev/null 2>&1 || true
+            done
+
+            for ns in "$NS_WEB" "$NS_API" "$NS_DB" "$NS_BULK"; do
+              ip netns del "$ns" >/dev/null 2>&1 || true
+            done
+
+            for p in web-br api-br db-br bulk-br; do
+              ip link del "$p" >/dev/null 2>&1 || true
+            done
+
+            ovs-ofctl -O OpenFlow13 del-flows "$BR" >/dev/null 2>&1 || true
+          }
+
+          create_host() {
+            local ns="$1"
+            local br_if="$2"
+            local ns_if="$3"
+            local ip_addr="$4"
+
+            ip netns add "$ns"
+            ip link add "$br_if" type veth peer name "$ns_if"
+            ovs-vsctl --may-exist add-port "$BR" "$br_if"
+            ip link set "$br_if" up
+            ip link set "$ns_if" netns "$ns"
+            ip netns exec "$ns" ip link set lo up
+            ip netns exec "$ns" ip addr add "$ip_addr" dev "$ns_if"
+            ip netns exec "$ns" ip link set "$ns_if" up
+          }
+
+          expect_ping_ok() {
+            local name="$1"
+            local ns="$2"
+            local dst="$3"
+
+            if ip netns exec "$ns" ping -c 3 -W 1 "$dst" >/tmp/${name}.out 2>&1; then
+              echo "[PASS] ${name}: allowed as expected"
+            else
+              cat /tmp/${name}.out
+              echo "[FAIL] ${name}: expected allow but traffic failed"
+              return 1
+            fi
+          }
+
+          expect_ping_deny() {
+            local name="$1"
+            local ns="$2"
+            local dst="$3"
+
+            if ip netns exec "$ns" ping -c 3 -W 1 "$dst" >/tmp/${name}.out 2>&1; then
+              cat /tmp/${name}.out
+              echo "[FAIL] ${name}: expected deny but traffic passed"
+              return 1
+            else
+              echo "[PASS] ${name}: denied as expected"
+            fi
+          }
+
+          cleanup
+          trap cleanup EXIT
+
+          create_host "$NS_WEB"  "web-br"  "web-eth0"  "172.31.100.11/24"
+          create_host "$NS_API"  "api-br"  "api-eth0"  "172.31.100.12/24"
+          create_host "$NS_DB"   "db-br"   "db-eth0"   "172.31.100.13/24"
+          create_host "$NS_BULK" "bulk-br" "bulk-eth0" "172.31.100.14/24"
+
+          # Deterministic OpenFlow policy.
+          # ARP is allowed so endpoints can resolve each other.
+          ovs-ofctl -O OpenFlow13 del-flows "$BR"
+          ovs-ofctl -O OpenFlow13 add-flow "$BR" "priority=200,arp,actions=NORMAL"
+
+          # Allow WEB <-> API
+          ovs-ofctl -O OpenFlow13 add-flow "$BR" "priority=300,ip,nw_src=172.31.100.11,nw_dst=172.31.100.12,actions=NORMAL"
+          ovs-ofctl -O OpenFlow13 add-flow "$BR" "priority=300,ip,nw_src=172.31.100.12,nw_dst=172.31.100.11,actions=NORMAL"
+
+          # Allow API <-> DB
+          ovs-ofctl -O OpenFlow13 add-flow "$BR" "priority=300,ip,nw_src=172.31.100.12,nw_dst=172.31.100.13,actions=NORMAL"
+          ovs-ofctl -O OpenFlow13 add-flow "$BR" "priority=300,ip,nw_src=172.31.100.13,nw_dst=172.31.100.12,actions=NORMAL"
+
+          # Default deny
+          ovs-ofctl -O OpenFlow13 add-flow "$BR" "priority=0,actions=drop"
+
+          echo "[ovs-policy] flows"
+          ovs-ofctl -O OpenFlow13 dump-flows "$BR"
+
+          expect_ping_ok   "web_to_api"  "$NS_WEB"  "172.31.100.12"
+          expect_ping_ok   "api_to_db"   "$NS_API"  "172.31.100.13"
+          expect_ping_deny "web_to_db"   "$NS_WEB"  "172.31.100.13"
+          expect_ping_deny "bulk_to_db"  "$NS_BULK" "172.31.100.13"
+
+          echo "OVS_EDGE_POLICY_SMOKE_PASS"
+
+    - name: Run OVS policy smoke test
+      ansible.builtin.command: /opt/sdn-lab/edge/ovs-policy-smoke.sh
+      register: ovs_policy_smoke
+      changed_when: true
+
+    - name: Show OVS policy smoke output
+      ansible.builtin.debug:
+        var: ovs_policy_smoke.stdout_lines
+
+    - name: Assert OVS policy smoke passed
+      ansible.builtin.assert:
+        that:
+          - ovs_policy_smoke.rc == 0
+          - "'OVS_EDGE_POLICY_SMOKE_PASS' in ovs_policy_smoke.stdout"
+        success_msg: "OVS_EDGE_POLICY_SMOKE_PASS"
+        fail_msg: "OVS edge policy smoke failed."

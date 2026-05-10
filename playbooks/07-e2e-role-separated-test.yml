@@ -1,0 +1,229 @@
+- name: Validate policy API service on controller node
+  hosts: control
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Ensure policy API service is running
+      ansible.builtin.systemd:
+        name: sdn-policy-api
+        state: started
+        enabled: true
+
+    - name: Wait for policy API port
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 8088
+        timeout: 30
+
+    - name: Check policy API health
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8088/health
+        method: GET
+        return_content: true
+      register: api_health
+
+    - name: Show API health
+      ansible.builtin.debug:
+        var: api_health.json
+
+    - name: Verify API points to remote fabric P4Runtime target
+      ansible.builtin.assert:
+        that:
+          - api_health.json.grpc_addr == "10.60.10.12:50052"
+        fail_msg: "Policy API is not pointing to fabric VM P4Runtime target."
+        success_msg: "Policy API points to fabric VM P4Runtime target."
+
+
+- name: Start BMv2/P4Runtime E2E topology on fabric node
+  hosts: fabric
+  become: true
+  gather_facts: false
+
+  vars:
+    state_dir: /opt/sdn-lab/fabric/state
+
+  tasks:
+    - name: Cleanup old Mininet/BMv2 state
+      ansible.builtin.shell: |
+        mn -c >/dev/null 2>&1 || true
+        pkill -f '[s]imple_switch_grpc' || true
+      args:
+        executable: /bin/bash
+      failed_when: false
+
+    - name: Ensure state directory exists
+      ansible.builtin.file:
+        path: "{{ state_dir }}"
+        state: directory
+        owner: automation
+        group: automation
+        mode: "0755"
+
+    - name: Remove old E2E markers
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ state_dir }}/phase1_done"
+        - "{{ state_dir }}/policy_installed"
+        - "{{ state_dir }}/policy_yaml_e2e_pass"
+        - "{{ state_dir }}/policy_yaml_e2e_fail"
+
+    - name: Verify E2E topology file exists
+      ansible.builtin.stat:
+        path: /opt/sdn-lab/fabric/topologies/segmentation_table_policy_test.py
+      register: topology_file
+
+    - name: Assert E2E topology file exists
+      ansible.builtin.assert:
+        that:
+          - topology_file.stat.exists
+        fail_msg: "Missing segmentation_table_policy_test.py on fabric node."
+
+    - name: Start table-driven BMv2 E2E topology asynchronously
+      ansible.builtin.shell: |
+        set -e
+        docker run --rm --privileged \
+          --network host \
+          --entrypoint /bin/bash \
+          -v /opt/sdn-lab/fabric:/workspace \
+          -v /opt/sdn-lab/fabric:/opt/sdn-lab/fabric \
+          -w /workspace \
+          opennetworking/p4mn:stable \
+          -lc 'python /workspace/topologies/segmentation_table_policy_test.py'
+      args:
+        executable: /bin/bash
+      async: 240
+      poll: 0
+      register: topology_job
+
+    - name: Store topology async job id
+      ansible.builtin.set_fact:
+        topology_async_job_id: "{{ topology_job.ansible_job_id }}"
+
+
+- name: Orchestrate role-separated policy apply and verify test result
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    fabric_host: "{{ groups['fabric'][0] }}"
+    control_host: "{{ groups['control'][0] }}"
+    fabric_ip: "{{ hostvars[groups['fabric'][0]].ansible_host }}"
+    fabric_state_dir: /opt/sdn-lab/fabric/state
+
+  tasks:
+    - name: Wait for fabric P4Runtime port 50052
+      ansible.builtin.wait_for:
+        host: "{{ fabric_ip }}"
+        port: 50052
+        timeout: 45
+
+    - name: Wait for Phase 1 default-deny marker on fabric
+      ansible.builtin.stat:
+        path: "{{ fabric_state_dir }}/phase1_done"
+      delegate_to: "{{ fabric_host }}"
+      become: true
+      register: phase1_marker
+      until: phase1_marker.stat.exists
+      retries: 90
+      delay: 1
+
+    - name: Check controller API readiness against remote fabric target
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8088/ready
+        method: GET
+        return_content: true
+      delegate_to: "{{ control_host }}"
+      register: api_ready
+      until:
+        - api_ready.json.status == "ready"
+        - api_ready.json.p4runtime_reachable == true
+      retries: 30
+      delay: 1
+
+    - name: Show API ready state
+      ansible.builtin.debug:
+        var: api_ready.json
+
+    - name: Apply default policy through controller API
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8088/policy/apply?replace=true
+        method: POST
+        return_content: true
+      delegate_to: "{{ control_host }}"
+      register: policy_apply
+      changed_when: true
+      failed_when:
+        - policy_apply.json.status != "ok" or policy_apply.json.installed_count != 4
+
+    - name: Show policy apply result
+      ansible.builtin.debug:
+        var: policy_apply.json
+
+    - name: Signal policy installation to fabric test
+      ansible.builtin.file:
+        path: "{{ fabric_state_dir }}/policy_installed"
+        state: touch
+        owner: automation
+        group: automation
+        mode: "0644"
+      delegate_to: "{{ fabric_host }}"
+      become: true
+
+    - name: Wait for fabric E2E topology test to finish
+      ansible.builtin.async_status:
+        jid: "{{ hostvars[fabric_host].topology_async_job_id }}"
+      delegate_to: "{{ fabric_host }}"
+      become: true
+      register: topology_result
+      until: topology_result.finished
+      retries: 180
+      delay: 1
+
+    - name: Show topology test stdout
+      ansible.builtin.debug:
+        var: topology_result.stdout_lines
+
+    - name: Show topology test stderr
+      ansible.builtin.debug:
+        var: topology_result.stderr_lines
+
+    - name: Check PASS marker on fabric
+      ansible.builtin.stat:
+        path: "{{ fabric_state_dir }}/policy_yaml_e2e_pass"
+      delegate_to: "{{ fabric_host }}"
+      become: true
+      register: pass_marker
+
+    - name: Check FAIL marker on fabric
+      ansible.builtin.stat:
+        path: "{{ fabric_state_dir }}/policy_yaml_e2e_fail"
+      delegate_to: "{{ fabric_host }}"
+      become: true
+      register: fail_marker
+
+    - name: Assert role-separated E2E test passed
+      ansible.builtin.assert:
+        that:
+          - topology_result.rc == 0
+          - pass_marker.stat.exists
+          - not fail_marker.stat.exists
+        fail_msg: "Role-separated policy E2E test failed."
+        success_msg: "ROLE_SEPARATED_E2E_TEST_PASS"
+
+
+- name: Cleanup fabric test state
+  hosts: fabric
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Cleanup Mininet/BMv2 state
+      ansible.builtin.shell: |
+        set -e
+        pkill -f '[s]imple_switch_grpc' || true
+        mn -c >/dev/null 2>&1 || true
+      args:
+        executable: /bin/bash

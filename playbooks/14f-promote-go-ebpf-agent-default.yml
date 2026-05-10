@@ -1,0 +1,114 @@
+- name: Promote Go eBPF stream agent as default
+  hosts: workloads
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Backup current Python-backed agent if present
+      ansible.builtin.shell: |
+        set -euo pipefail
+
+        if [ -f /opt/sdn-lab/ebpf/agent/sdn-ebpf-agent.py ]; then
+          cp -f /opt/sdn-lab/ebpf/agent/sdn-ebpf-agent.py \
+            /opt/sdn-lab/ebpf/agent/sdn-ebpf-agent.py.python-backup
+        fi
+
+        echo "PYTHON_AGENT_BACKUP_DONE"
+      args:
+        executable: /bin/bash
+      changed_when: true
+
+    - name: Patch Go agent source labels from canary to default
+      ansible.builtin.shell: |
+        set -euo pipefail
+
+        SRC="/opt/sdn-lab/ebpf/go-agent/cmd/sdn-ebpf-agent/main.go"
+
+        test -f "$SRC"
+
+        sed -i \
+          -e 's/go-bpftrace-stream-canary/go-bpftrace-stream-default/g' \
+          -e 's/sdn-ebpf-go-agent:bpftrace-stream-v1:kprobe:tcp_v4_connect/sdn-ebpf-go-agent:default-v1:bpftrace:kprobe:tcp_v4_connect/g' \
+          "$SRC"
+
+        cd /opt/sdn-lab/ebpf/go-agent
+        go build -o /opt/sdn-lab/ebpf/go-agent/sdn-ebpf-agent ./cmd/sdn-ebpf-agent
+
+        /opt/sdn-lab/ebpf/go-agent/sdn-ebpf-agent --config /etc/sdn-ebpf-agent/config.json >/tmp/go-agent-default-ready.out 2>&1 &
+        PID=$!
+        sleep 2
+        kill "$PID" >/dev/null 2>&1 || true
+        cat /tmp/go-agent-default-ready.out || true
+      args:
+        executable: /bin/bash
+      register: go_patch_build
+      changed_when: true
+
+    - name: Show Go default agent build output
+      ansible.builtin.debug:
+        var: go_patch_build.stdout_lines
+
+    - name: Stop Go canary service if present
+      ansible.builtin.systemd:
+        name: sdn-ebpf-go-agent
+        state: stopped
+        enabled: false
+      failed_when: false
+
+    - name: Promote default sdn-ebpf-agent.service to Go binary
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/sdn-ebpf-agent.service
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=SDN Lab eBPF Agent - Go Stream Default
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=simple
+          User=root
+          Group=root
+          ExecStart=/opt/sdn-lab/ebpf/go-agent/sdn-ebpf-agent --config /etc/sdn-ebpf-agent/config.json
+          Restart=always
+          RestartSec=3
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Restart default Go eBPF agent
+      ansible.builtin.systemd:
+        name: sdn-ebpf-agent
+        daemon_reload: true
+        enabled: true
+        state: restarted
+
+    - name: Wait for Go default agent attach
+      ansible.builtin.pause:
+        seconds: 5
+
+    - name: Show default agent status
+      ansible.builtin.shell: |
+        set -euo pipefail
+
+        echo "----- service -----"
+        systemctl is-active sdn-ebpf-agent
+
+        echo "----- unit -----"
+        systemctl cat sdn-ebpf-agent
+
+        echo "----- state -----"
+        cat /opt/sdn-lab/ebpf/state/agent_state.json | jq .
+
+        echo "----- journal -----"
+        journalctl -u sdn-ebpf-agent -n 30 --no-pager
+      args:
+        executable: /bin/bash
+      register: default_agent_status
+      changed_when: false
+
+    - name: Print default agent status
+      ansible.builtin.debug:
+        var: default_agent_status.stdout_lines

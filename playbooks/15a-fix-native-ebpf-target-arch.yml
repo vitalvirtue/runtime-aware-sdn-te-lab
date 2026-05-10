@@ -1,0 +1,83 @@
+- name: Fix native eBPF target arch and rebuild
+  hosts: workloads
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Patch go generate line with __TARGET_ARCH_x86
+      ansible.builtin.replace:
+        path: /opt/sdn-lab/ebpf/native-agent/cmd/sdn-ebpf-native-agent/main.go
+        regexp: 'go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall" bpf ../../bpf/tcpconnect.bpf.c -- -I../../bpf -I/usr/include/bpf'
+        replace: 'go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall -D__TARGET_ARCH_x86" bpf ../../bpf/tcpconnect.bpf.c -- -I../../bpf -I/usr/include/bpf'
+
+    - name: Show go generate line
+      ansible.builtin.shell: |
+        set -euo pipefail
+        grep -n "go:generate" /opt/sdn-lab/ebpf/native-agent/cmd/sdn-ebpf-native-agent/main.go
+      args:
+        executable: /bin/bash
+      register: generate_line
+      changed_when: false
+
+    - name: Print go generate line
+      ansible.builtin.debug:
+        var: generate_line.stdout_lines
+
+    - name: Rebuild native Go eBPF canary with target arch
+      ansible.builtin.shell: |
+        set -euo pipefail
+
+        export PATH="/usr/local/go/bin:/usr/local/bin:$PATH"
+
+        echo "using_go=$(go version)"
+        echo "using_go_path=$(command -v go)"
+
+        cd /opt/sdn-lab/ebpf/native-agent
+        go mod tidy
+
+        cd /opt/sdn-lab/ebpf/native-agent/cmd/sdn-ebpf-native-agent
+
+        rm -f bpf_bpfel.go bpf_bpfeb.go bpf_bpfel.o bpf_bpfeb.o
+
+        go generate
+        go build -o /opt/sdn-lab/ebpf/native-agent/sdn-ebpf-native-agent .
+
+        test -x /opt/sdn-lab/ebpf/native-agent/sdn-ebpf-native-agent
+
+        echo "NATIVE_GO_EBPF_CANARY_BUILD_PASS"
+      args:
+        executable: /bin/bash
+      register: native_rebuild
+
+    - name: Show native rebuild result
+      ansible.builtin.debug:
+        var: native_rebuild.stdout_lines
+
+    - name: Ensure native eBPF canary service exists
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/sdn-ebpf-native-agent.service
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=SDN Lab Native Go eBPF Agent Canary
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=simple
+          User=root
+          Group=root
+          ExecStart=/opt/sdn-lab/ebpf/native-agent/sdn-ebpf-native-agent --config /etc/sdn-ebpf-agent/config.json --oneshot --timeout 30s
+          Restart=no
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Keep native eBPF canary disabled by default
+      ansible.builtin.systemd:
+        name: sdn-ebpf-native-agent
+        daemon_reload: true
+        enabled: false
+        state: stopped

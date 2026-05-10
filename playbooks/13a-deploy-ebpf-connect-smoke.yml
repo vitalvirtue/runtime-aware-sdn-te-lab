@@ -1,0 +1,127 @@
+- name: Deploy eBPF TCP connect smoke tooling on workload nodes
+  hosts: workloads
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Install eBPF smoke dependencies
+      ansible.builtin.apt:
+        name:
+          - bpftrace
+          - bpftool
+          - curl
+          - jq
+          - iproute2
+          - procps
+        state: present
+        update_cache: true
+
+    - name: Create eBPF lab directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      loop:
+        - /opt/sdn-lab/ebpf
+        - /opt/sdn-lab/ebpf/scripts
+        - /opt/sdn-lab/ebpf/logs
+
+    - name: Ensure tracefs and bpffs are mounted when available
+      ansible.builtin.shell: |
+        set -e
+
+        mkdir -p /sys/kernel/tracing
+        mkdir -p /sys/fs/bpf
+
+        mountpoint -q /sys/kernel/tracing || mount -t tracefs tracefs /sys/kernel/tracing || true
+        mountpoint -q /sys/fs/bpf || mount -t bpf bpf /sys/fs/bpf || true
+
+        echo "kernel=$(uname -r)"
+        echo "tracefs=$(mountpoint -q /sys/kernel/tracing && echo mounted || echo not-mounted)"
+        echo "bpffs=$(mountpoint -q /sys/fs/bpf && echo mounted || echo not-mounted)"
+        bpftrace --version || true
+        bpftool version || true
+      args:
+        executable: /bin/bash
+      register: ebpf_mounts
+
+    - name: Show eBPF readiness
+      ansible.builtin.debug:
+        var: ebpf_mounts.stdout_lines
+
+    - name: Create bpftrace TCP connect smoke script
+      ansible.builtin.copy:
+        dest: /opt/sdn-lab/ebpf/scripts/tcp-connect-smoke.bt
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          BEGIN
+          {
+            printf("EBPF_CONNECT_TRACE_START\n");
+          }
+
+          tracepoint:syscalls:sys_enter_connect
+          /comm == "curl" || comm == "python3" || comm == "uvicorn" || comm == "nginx"/
+          {
+            printf("CONNECT pid=%d comm=%s fd=%d addrlen=%d\n", pid, comm, args->fd, args->addrlen);
+          }
+
+          END
+          {
+            printf("EBPF_CONNECT_TRACE_END\n");
+          }
+
+    - name: Create eBPF TCP connect smoke runner
+      ansible.builtin.copy:
+        dest: /opt/sdn-lab/ebpf/run-connect-smoke.sh
+        owner: root
+        group: root
+        mode: "0755"
+        content: |
+          #!/usr/bin/env bash
+          set -euo pipefail
+
+          HOST="$(hostname)"
+          LOG="/opt/sdn-lab/ebpf/logs/tcp-connect-smoke.log"
+
+          rm -f "$LOG"
+
+          echo "EBPF_SMOKE_HOST=$HOST"
+
+          timeout 12s bpftrace /opt/sdn-lab/ebpf/scripts/tcp-connect-smoke.bt > "$LOG" 2>&1 &
+          BPF_PID="$!"
+
+          # Give bpftrace time to compile and attach.
+          sleep 4
+
+          case "$HOST" in
+            lab-sdn-app-web-01)
+              echo "GENERATE_TRAFFIC web->api"
+              curl -fsS http://172.31.210.12:18080/health >/dev/null || true
+              ;;
+            lab-sdn-app-api-01)
+              echo "GENERATE_TRAFFIC api->db"
+              curl -fsS http://172.31.210.13:15432/health >/dev/null || true
+              ;;
+            lab-sdn-data-db-01)
+              echo "GENERATE_TRAFFIC db->api"
+              curl -fsS http://172.31.210.12:18080/health >/dev/null || true
+              ;;
+            lab-sdn-app-bulk-01)
+              echo "GENERATE_TRAFFIC bulk->api"
+              curl -fsS http://172.31.210.12:18080/health >/dev/null || true
+              ;;
+            *)
+              echo "GENERATE_TRAFFIC unknown-host"
+              curl -fsS http://127.0.0.1/ >/dev/null || true
+              ;;
+          esac
+
+          sleep 2
+          wait "$BPF_PID" || true
+
+          echo "----- bpftrace output -----"
+          cat "$LOG"

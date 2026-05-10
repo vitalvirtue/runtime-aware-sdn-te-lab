@@ -1,0 +1,177 @@
+- name: Clear central eBPF event store
+  hosts: control
+  gather_facts: false
+
+  tasks:
+    - name: Clear eBPF events
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8090/ebpf/events
+        method: DELETE
+        return_content: true
+
+
+- name: Run native Go eBPF ringbuf canary
+  hosts: workloads
+  become: true
+  gather_facts: false
+
+  vars:
+    expected_flow_class:
+      lab-sdn-app-web-01: "web_to_api"
+      lab-sdn-app-api-01: "critical_api_to_db"
+      lab-sdn-data-db-01: "db_to_api"
+      lab-sdn-app-bulk-01: "bulk_to_api"
+
+  tasks:
+    - name: Stop default Go bpftrace-backed agent for native canary window
+      ansible.builtin.systemd:
+        name: sdn-ebpf-agent
+        state: stopped
+
+    - name: Start native eBPF canary
+      ansible.builtin.systemd:
+        name: sdn-ebpf-native-agent
+        state: restarted
+        enabled: false
+        daemon_reload: true
+
+    - name: Wait for native canary attach
+      ansible.builtin.pause:
+        seconds: 3
+
+    - name: Generate workload traffic for native canary
+      ansible.builtin.shell: |
+        set -euo pipefail
+
+        HOST="$(hostname)"
+
+        case "$HOST" in
+          lab-sdn-app-web-01)
+            curl -fsS http://172.31.210.12:18080/health >/dev/null
+            ;;
+          lab-sdn-app-api-01)
+            curl -fsS http://172.31.210.13:15432/health >/dev/null
+            ;;
+          lab-sdn-data-db-01)
+            curl -fsS http://172.31.210.12:18080/health >/dev/null
+            ;;
+          lab-sdn-app-bulk-01)
+            curl -fsS http://172.31.210.12:18080/health >/dev/null
+            ;;
+        esac
+
+        sleep 2
+
+        journalctl -u sdn-ebpf-native-agent -n 50 --no-pager
+      args:
+        executable: /bin/bash
+      register: native_journal
+      changed_when: true
+      failed_when: >
+        'SDN_NATIVE_EBPF_EVENT_SENT' not in native_journal.stdout or
+        expected_flow_class[inventory_hostname] not in native_journal.stdout
+
+    - name: Show native canary journal
+      ansible.builtin.debug:
+        var: native_journal.stdout_lines
+
+    - name: Read native local state
+      ansible.builtin.slurp:
+        src: /opt/sdn-lab/ebpf/state/native_agent_state.json
+      register: native_state_raw
+
+    - name: Parse native local state
+      ansible.builtin.set_fact:
+        native_state: "{{ native_state_raw.content | b64decode | from_json }}"
+
+    - name: Assert native local state
+      ansible.builtin.assert:
+        that:
+          - native_state.runtime == "native-go-ebpf-ringbuf-canary"
+          - native_state.host == inventory_hostname
+          - native_state.last_post_success == true
+          - native_state.last_event.flow_class == expected_flow_class[inventory_hostname]
+          - native_state.last_event.source == "sdn-ebpf-go-agent:native-ringbuf-v1:kprobe:tcp_v4_connect"
+        success_msg: "NATIVE_GO_EBPF_RINGBUF_LOCAL_STATE_PASS {{ inventory_hostname }}"
+        fail_msg: "Native Go eBPF local state validation failed."
+
+
+- name: Verify native eBPF events in central collector
+  hosts: control
+  gather_facts: false
+
+  tasks:
+    - name: Read current eBPF events
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8090/ebpf/events/current?limit=100
+        method: GET
+        return_content: true
+      register: current_events
+      until: >
+        ((current_events.content | from_json).count | int) >= 4
+      retries: 10
+      delay: 2
+
+    - name: Parse central events
+      ansible.builtin.set_fact:
+        ebpf_state: "{{ current_events.content | from_json }}"
+
+    - name: Extract native event attributes
+      ansible.builtin.set_fact:
+        flow_classes: "{{ ebpf_state.events | map(attribute='flow_class') | list }}"
+        sources: "{{ ebpf_state.events | map(attribute='source') | list }}"
+        comms: "{{ ebpf_state.events | map(attribute='comm') | list }}"
+
+    - name: Show central native eBPF telemetry
+      ansible.builtin.debug:
+        msg:
+          count: "{{ ebpf_state.count }}"
+          flow_classes: "{{ flow_classes }}"
+          sources: "{{ sources }}"
+          comms: "{{ comms }}"
+
+    - name: Assert native eBPF telemetry in collector
+      ansible.builtin.assert:
+        that:
+          - ebpf_state.status == "ok"
+          - ebpf_state.count | int >= 4
+          - "'web_to_api' in flow_classes"
+          - "'critical_api_to_db' in flow_classes"
+          - "'db_to_api' in flow_classes"
+          - "'bulk_to_api' in flow_classes"
+          - "'sdn-ebpf-go-agent:native-ringbuf-v1:kprobe:tcp_v4_connect' in sources"
+        success_msg: "NATIVE_GO_EBPF_RINGBUF_COLLECTOR_PASS"
+        fail_msg: "Native Go eBPF collector validation failed."
+
+    - name: Mark milestone 15A passed
+      ansible.builtin.debug:
+        msg: "SDN_NATIVE_GO_EBPF_RINGBUF_CANARY_PASS"
+
+
+- name: Restore default Go bpftrace-backed agent
+  hosts: workloads
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Stop native canary
+      ansible.builtin.systemd:
+        name: sdn-ebpf-native-agent
+        state: stopped
+        enabled: false
+
+    - name: Restart default Go eBPF agent
+      ansible.builtin.systemd:
+        name: sdn-ebpf-agent
+        state: restarted
+        enabled: true
+
+    - name: Confirm default Go agent active
+      ansible.builtin.shell: |
+        set -euo pipefail
+        systemctl is-active sdn-ebpf-agent
+        systemctl cat sdn-ebpf-agent | grep -q '/opt/sdn-lab/ebpf/go-agent/sdn-ebpf-agent'
+        echo "DEFAULT_GO_AGENT_RESTORED"
+      args:
+        executable: /bin/bash
+      changed_when: false

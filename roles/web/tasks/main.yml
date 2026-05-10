@@ -1,0 +1,23 @@
+- name: Install nginx
+  ansible.builtin.apt:
+    name: nginx
+    state: present
+
+- name: Deploy landing page
+  ansible.builtin.copy:
+    dest: /var/www/html/index.html
+    content: |
+      <html>
+      <head><title>lab-sdn-app-web-01</title></head>
+      <body>
+      <h1>lab-sdn-app-web-01</h1>
+      <p>Web workload is up.</p>
+      </body>
+      </html>
+    mode: '0644'
+
+- name: Enable nginx
+  ansible.builtin.service:
+    name: nginx
+    enabled: true
+    state: started

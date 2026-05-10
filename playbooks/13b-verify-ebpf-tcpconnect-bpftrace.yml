@@ -1,0 +1,40 @@
+- name: Verify eBPF tcp_v4_connect IP/port telemetry on workload nodes
+  hosts: workloads
+  become: true
+  gather_facts: false
+
+  vars:
+    expected_map:
+      lab-sdn-app-web-01:
+        daddr: "172.31.210.12"
+        dport: "18080"
+      lab-sdn-app-api-01:
+        daddr: "172.31.210.13"
+        dport: "15432"
+      lab-sdn-data-db-01:
+        daddr: "172.31.210.12"
+        dport: "18080"
+      lab-sdn-app-bulk-01:
+        daddr: "172.31.210.12"
+        dport: "18080"
+
+  tasks:
+    - name: Run bpftrace tcp_v4_connect telemetry smoke
+      ansible.builtin.shell: |
+        set -e
+        /opt/sdn-lab/ebpf/run-tcp-v4-connect-ip-port.sh
+      args:
+        executable: /bin/bash
+      register: tcpconnect_bpftrace
+      failed_when: >
+        'EBPF_TCP_V4_CONNECT_TRACE_START' not in tcpconnect_bpftrace.stdout or
+        'TCP_CONNECT pid=' not in tcpconnect_bpftrace.stdout or
+        expected_map[inventory_hostname].daddr not in tcpconnect_bpftrace.stdout
+
+    - name: Show bpftrace tcp_v4_connect output
+      ansible.builtin.debug:
+        var: tcpconnect_bpftrace.stdout_lines
+
+    - name: Mark bpftrace tcpconnect telemetry passed
+      ansible.builtin.debug:
+        msg: "EBPF_TCP_V4_CONNECT_IP_PORT_SMOKE_PASS {{ inventory_hostname }}"

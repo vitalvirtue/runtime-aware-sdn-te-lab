@@ -1,0 +1,32 @@
+- name: Clean stale TE path interfaces and OVS ports
+  hosts: edge
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Remove stale TE OVS ports and Linux interfaces
+      ansible.builtin.shell: |
+        set +e
+
+        BR="br-edge0"
+
+        for p in path1-to-b path2-to-b path1-to-a path2-to-a; do
+          ovs-vsctl --if-exists del-port "$BR" "$p" >/dev/null 2>&1 || true
+          ip link del "$p" >/dev/null 2>&1 || true
+        done
+
+        for p in path1-to-b path2-to-b path1-to-a path2-to-a; do
+          tc qdisc del dev "$p" root >/dev/null 2>&1 || true
+        done
+
+        echo "TE_PATH_CLEANUP_DONE host=$(hostname)"
+        ip -d link show type vxlan || true
+        ovs-vsctl list-ports "$BR" || true
+      args:
+        executable: /bin/bash
+      register: cleanup_result
+      failed_when: false
+
+    - name: Show cleanup result
+      ansible.builtin.debug:
+        var: cleanup_result.stdout_lines

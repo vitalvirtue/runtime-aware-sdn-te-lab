@@ -1,0 +1,21 @@
+- name: Install OVS
+  ansible.builtin.apt:
+    name: openvswitch-switch
+    state: present
+
+- name: Enable OVS
+  ansible.builtin.service:
+    name: openvswitch-switch
+    enabled: true
+    state: started
+
+- name: Ensure br-edge exists
+  ansible.builtin.shell: |
+    ovs-vsctl br-exists br-edge || ovs-vsctl add-br br-edge
+  args:
+    executable: /bin/bash
+  changed_when: false
+
+- name: Set OpenFlow13 on br-edge
+  ansible.builtin.command: ovs-vsctl set bridge br-edge protocols=OpenFlow13
+  changed_when: true

@@ -1,0 +1,172 @@
+- name: Clear central eBPF event store
+  hosts: control
+  gather_facts: false
+
+  tasks:
+    - name: Clear eBPF events
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8090/ebpf/events
+        method: DELETE
+        return_content: true
+
+
+- name: Run Go eBPF stream canary
+  hosts: workloads
+  become: true
+  gather_facts: false
+
+  vars:
+    expected_flow_class:
+      lab-sdn-app-web-01: "web_to_api"
+      lab-sdn-app-api-01: "critical_api_to_db"
+      lab-sdn-data-db-01: "db_to_api"
+      lab-sdn-app-bulk-01: "bulk_to_api"
+
+  tasks:
+    - name: Stop stable Python-backed eBPF agent for canary window
+      ansible.builtin.systemd:
+        name: sdn-ebpf-agent
+        state: stopped
+
+    - name: Start Go eBPF stream canary
+      ansible.builtin.systemd:
+        name: sdn-ebpf-go-agent
+        state: restarted
+        enabled: false
+        daemon_reload: true
+
+    - name: Wait for Go canary attach
+      ansible.builtin.pause:
+        seconds: 5
+
+    - name: Generate workload traffic for Go canary
+      ansible.builtin.shell: |
+        set -euo pipefail
+
+        HOST="$(hostname)"
+
+        case "$HOST" in
+          lab-sdn-app-web-01)
+            curl -fsS http://172.31.210.12:18080/health >/dev/null
+            ;;
+          lab-sdn-app-api-01)
+            curl -fsS http://172.31.210.13:15432/health >/dev/null
+            ;;
+          lab-sdn-data-db-01)
+            curl -fsS http://172.31.210.12:18080/health >/dev/null
+            ;;
+          lab-sdn-app-bulk-01)
+            curl -fsS http://172.31.210.12:18080/health >/dev/null
+            ;;
+        esac
+
+        sleep 1
+        journalctl -u sdn-ebpf-go-agent -n 30 --no-pager
+      args:
+        executable: /bin/bash
+      register: go_journal
+      changed_when: true
+      failed_when: >
+        'SDN_GO_EBPF_STREAM_EVENT_SENT' not in go_journal.stdout or
+        expected_flow_class[inventory_hostname] not in go_journal.stdout
+
+    - name: Show Go canary journal
+      ansible.builtin.debug:
+        var: go_journal.stdout_lines
+
+    - name: Read Go canary local state
+      ansible.builtin.slurp:
+        src: /opt/sdn-lab/ebpf/state/agent_state.json
+      register: state_raw
+
+    - name: Parse Go canary local state
+      ansible.builtin.set_fact:
+        go_state: "{{ state_raw.content | b64decode | from_json }}"
+
+    - name: Assert Go canary local state
+      ansible.builtin.assert:
+        that:
+          - go_state.runtime == "go-bpftrace-stream-canary"
+          - go_state.host == inventory_hostname
+          - go_state.last_post_success == true
+          - go_state.last_event.flow_class == expected_flow_class[inventory_hostname]
+          - go_state.last_event.source == "sdn-ebpf-go-agent:bpftrace-stream-v1:kprobe:tcp_v4_connect"
+        success_msg: "GO_EBPF_STREAM_LOCAL_STATE_PASS {{ inventory_hostname }}"
+        fail_msg: "Go stream local state validation failed."
+
+
+- name: Verify Go stream events in central collector
+  hosts: control
+  gather_facts: false
+
+  tasks:
+    - name: Read current eBPF events
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8090/ebpf/events/current?limit=100
+        method: GET
+        return_content: true
+      register: current_events
+      until: >
+        ((current_events.content | from_json).count | int) >= 4
+      retries: 10
+      delay: 2
+
+    - name: Parse current events
+      ansible.builtin.set_fact:
+        ebpf_state: "{{ current_events.content | from_json }}"
+
+    - name: Extract central event attributes
+      ansible.builtin.set_fact:
+        flow_classes: "{{ ebpf_state.events | map(attribute='flow_class') | list }}"
+        sources: "{{ ebpf_state.events | map(attribute='source') | list }}"
+
+    - name: Show central Go stream telemetry
+      ansible.builtin.debug:
+        msg:
+          count: "{{ ebpf_state.count }}"
+          flow_classes: "{{ flow_classes }}"
+          sources: "{{ sources }}"
+
+    - name: Assert central Go stream telemetry
+      ansible.builtin.assert:
+        that:
+          - ebpf_state.status == "ok"
+          - ebpf_state.count | int >= 4
+          - "'web_to_api' in flow_classes"
+          - "'critical_api_to_db' in flow_classes"
+          - "'db_to_api' in flow_classes"
+          - "'bulk_to_api' in flow_classes"
+          - "'sdn-ebpf-go-agent:bpftrace-stream-v1:kprobe:tcp_v4_connect' in sources"
+        success_msg: "GO_EBPF_STREAM_COLLECTOR_PASS"
+        fail_msg: "Go stream collector validation failed."
+
+    - name: Mark milestone 14E passed
+      ansible.builtin.debug:
+        msg: "SDN_GO_EBPF_STREAM_CANARY_PASS"
+
+
+- name: Restore stable Python-backed eBPF agent
+  hosts: workloads
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Stop Go canary agent
+      ansible.builtin.systemd:
+        name: sdn-ebpf-go-agent
+        state: stopped
+        enabled: false
+
+    - name: Restart stable Python-backed eBPF agent
+      ansible.builtin.systemd:
+        name: sdn-ebpf-agent
+        state: restarted
+        enabled: true
+
+    - name: Confirm stable agent is active
+      ansible.builtin.shell: |
+        set -e
+        systemctl is-active sdn-ebpf-agent
+      args:
+        executable: /bin/bash
+      changed_when: false

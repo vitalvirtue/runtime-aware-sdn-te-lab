@@ -1,0 +1,86 @@
+- name: Clear central eBPF event store
+  hosts: control
+  gather_facts: false
+
+  tasks:
+    - name: Clear eBPF events
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8090/ebpf/events
+        method: DELETE
+        return_content: true
+
+
+- name: Generate and submit eBPF telemetry from workloads
+  hosts: workloads
+  become: true
+  gather_facts: false
+  serial: 1
+
+  tasks:
+    - name: Submit eBPF JSON telemetry to collector
+      ansible.builtin.shell: |
+        set -e
+        /opt/sdn-lab/ebpf/submit-json-telemetry-smoke.sh
+      args:
+        executable: /bin/bash
+      register: submit_result
+      failed_when: >
+        'EBPF_TELEMETRY_SUBMIT_DONE' not in submit_result.stdout or
+        'accepted_count' not in submit_result.stdout
+
+
+- name: Verify eBPF and TE metrics correlation
+  hosts: control
+  gather_facts: false
+
+  tasks:
+    - name: Collect correlation
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8090/correlation/collect
+        method: POST
+        return_content: true
+      register: correlation_collect
+
+    - name: Parse correlation
+      ansible.builtin.set_fact:
+        correlation: "{{ correlation_collect.content | from_json }}"
+
+    - name: Extract correlated flow classes
+      ansible.builtin.set_fact:
+        correlated_flow_classes: "{{ correlation.correlations | map(attribute='flow_class') | list }}"
+
+    - name: Show correlation summary
+      ansible.builtin.debug:
+        msg:
+          ebpf_event_count: "{{ correlation.ebpf_event_count }}"
+          flow_classes: "{{ correlated_flow_classes }}"
+          correlations: "{{ correlation.correlations }}"
+
+    - name: Extract critical and bulk correlation
+      ansible.builtin.set_fact:
+        critical_corr: "{{ correlation.correlations | selectattr('flow_class', 'equalto', 'critical_api_to_db') | list }}"
+        bulk_corr: "{{ correlation.correlations | selectattr('flow_class', 'equalto', 'bulk_to_api') | list }}"
+
+    - name: Assert correlation contains host and network telemetry
+      ansible.builtin.assert:
+        that:
+          - correlation.status == "ok"
+          - correlation.ebpf_event_count | int >= 4
+          - "'web_to_api' in correlated_flow_classes"
+          - "'critical_api_to_db' in correlated_flow_classes"
+          - "'db_to_api' in correlated_flow_classes"
+          - "'bulk_to_api' in correlated_flow_classes"
+          - critical_corr | length > 0
+          - bulk_corr | length > 0
+          - critical_corr[0].host_event_count | int >= 1
+          - bulk_corr[0].host_event_count | int >= 1
+          - critical_corr[0].network_metrics.edge_a_packets | int >= 0
+          - critical_corr[0].network_metrics.edge_b_packets | int >= 0
+          - critical_corr[0].network_metrics.latency_seconds | float > 0
+          - bulk_corr[0].network_metrics.latency_seconds | float > 0
+        success_msg: "EBPF_TE_CORRELATION_PASS"
+        fail_msg: "eBPF and TE metrics correlation failed."
+
+    - name: Mark milestone 13E passed
+      ansible.builtin.debug:
+        msg: "EBPF_TELEMETRY_TE_METRICS_CORRELATION_PASS"

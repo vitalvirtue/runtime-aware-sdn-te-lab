@@ -1,0 +1,59 @@
+- name: Patch TE metrics collector SSH identity
+  hosts: control
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Patch app.py to use dedicated SSH key and non-interactive sudo
+      ansible.builtin.shell: |
+        set -e
+
+        python3 - <<'PY'
+        from pathlib import Path
+
+        p = Path("/opt/sdn-lab/te-metrics/app.py")
+        text = p.read_text()
+
+        old = '''[
+                      "ssh",
+                      "-o", "StrictHostKeyChecking=no",
+                      "-o", "BatchMode=yes",
+                      f"automation@{host}",
+                      command,
+                  ]'''
+
+        new = '''[
+                      "ssh",
+                      "-i", "/home/automation/.ssh/id_ed25519_te_metrics",
+                      "-o", "StrictHostKeyChecking=no",
+                      "-o", "BatchMode=yes",
+                      f"automation@{host}",
+                      command,
+                  ]'''
+
+        if old not in text:
+            print("SSH block already patched or pattern not found.")
+        else:
+            text = text.replace(old, new)
+
+        text = text.replace(
+            'flow_cmd = "sudo ovs-ofctl -O OpenFlow13 dump-flows br-edge0"',
+            'flow_cmd = "sudo -n ovs-ofctl -O OpenFlow13 dump-flows br-edge0"'
+        )
+
+        p.write_text(text)
+        print("patched")
+        PY
+      args:
+        executable: /bin/bash
+
+    - name: Restart TE metrics collector
+      ansible.builtin.systemd:
+        name: sdn-te-metrics
+        state: restarted
+
+    - name: Wait for TE metrics collector
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 8090
+        timeout: 30

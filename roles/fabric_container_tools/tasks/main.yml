@@ -1,0 +1,124 @@
+- name: Pull Stratum Mininet image
+  ansible.builtin.command: docker pull opennetworking/mn-stratum:latest
+  changed_when: true
+
+- name: Pull P4Runtime Mininet image
+  ansible.builtin.command: docker pull opennetworking/p4mn:stable
+  changed_when: true
+
+- name: Pull pinned P4 compiler image
+  ansible.builtin.command: docker pull opennetworking/p4c:stable
+  changed_when: true
+
+- name: Create fabric lab directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+  loop:
+    - /opt/sdn-lab/fabric
+    - /opt/sdn-lab/fabric/topologies
+    - /opt/sdn-lab/fabric/p4
+    - /opt/sdn-lab/fabric/out
+    - /opt/sdn-lab/fabric/scripts
+
+- name: Create helper script for mn-stratum shell
+  ansible.builtin.copy:
+    dest: /opt/sdn-lab/fabric/scripts/run-mn-stratum-shell.sh
+    mode: '0755'
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      docker run --rm -it --privileged \
+        --network host \
+        --entrypoint /bin/bash \
+        -v /opt/sdn-lab/fabric:/workspace \
+        -w /workspace \
+        opennetworking/mn-stratum:latest
+
+- name: Create helper script for p4mn shell
+  ansible.builtin.copy:
+    dest: /opt/sdn-lab/fabric/scripts/run-p4mn-shell.sh
+    mode: '0755'
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      docker run --rm -it --privileged \
+        --network host \
+        --entrypoint /bin/bash \
+        -v /opt/sdn-lab/fabric:/workspace \
+        -w /workspace \
+        opennetworking/p4mn:stable
+
+- name: Create helper script for p4c shell
+  ansible.builtin.copy:
+    dest: /opt/sdn-lab/fabric/scripts/run-p4c-shell.sh
+    mode: '0755'
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      docker run --rm -it \
+        --entrypoint /bin/bash \
+        -v /opt/sdn-lab/fabric:/workspace \
+        -w /workspace \
+        opennetworking/p4c:stable
+
+- name: Create P4 compile helper
+  ansible.builtin.copy:
+    dest: /opt/sdn-lab/fabric/scripts/compile-p4.sh
+    mode: '0755'
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      if [ $# -ne 1 ]; then
+        echo "Usage: $0 <p4-file>"
+        exit 1
+      fi
+
+      P4_FILE="$1"
+      BASENAME="$(basename "$P4_FILE" .p4)"
+
+      docker run --rm \
+        -v /opt/sdn-lab/fabric:/workspace \
+        -w /workspace \
+        opennetworking/p4c:stable \
+        p4c-bm2-ss \
+          --p4v 16 \
+          -o "out/${BASENAME}.json" \
+          "p4/${BASENAME}.p4"
+
+      echo "Compiled: out/${BASENAME}.json"
+
+- name: Create non-interactive p4c smoke test script
+  ansible.builtin.copy:
+    dest: /opt/sdn-lab/fabric/scripts/test-p4c.sh
+    mode: '0755'
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      docker run --rm \
+        -v /opt/sdn-lab/fabric:/workspace \
+        -w /workspace \
+        opennetworking/p4c:stable \
+        p4c --version
+
+- name: Create non-interactive p4mn smoke test script
+  ansible.builtin.copy:
+    dest: /opt/sdn-lab/fabric/scripts/test-p4mn.sh
+    mode: '0755'
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      docker run --rm --privileged \
+        --network host \
+        --entrypoint /bin/bash \
+        -v /opt/sdn-lab/fabric:/workspace \
+        -w /workspace \
+        opennetworking/p4mn:stable \
+        -lc 'which mn; which simple_switch_grpc || true; python --version || true'

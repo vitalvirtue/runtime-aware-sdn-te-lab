@@ -1,0 +1,213 @@
+- name: Add eBPF telemetry endpoints to TE metrics collector
+  hosts: control
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Ensure TE metrics state directory exists
+      ansible.builtin.file:
+        path: /opt/sdn-lab/te-metrics/state
+        state: directory
+        owner: automation
+        group: automation
+        mode: "0755"
+
+    - name: Add eBPF telemetry endpoints to collector app
+      ansible.builtin.blockinfile:
+        path: /opt/sdn-lab/te-metrics/app.py
+        marker: "# {mark} ANSIBLE MANAGED BLOCK - eBPF telemetry endpoints"
+        insertafter: EOF
+        block: |
+          # eBPF telemetry endpoint imports
+          from fastapi import Request
+
+          # --- eBPF telemetry endpoints ---
+
+          EBPF_EVENTS_FILE = Path("/opt/sdn-lab/te-metrics/state/ebpf_events.jsonl")
+
+          def _count_ebpf_events():
+              if not EBPF_EVENTS_FILE.exists():
+                  return 0
+
+              with EBPF_EVENTS_FILE.open("r", encoding="utf-8", errors="ignore") as f:
+                  return sum(1 for line in f if line.strip())
+
+          def _parse_event_payload(text_body: str):
+              text_body = text_body.strip()
+
+              if not text_body:
+                  return []
+
+              events = []
+
+              try:
+                  data = json.loads(text_body)
+
+                  if isinstance(data, list):
+                      events = data
+                  elif isinstance(data, dict):
+                      events = [data]
+                  else:
+                      events = []
+
+                  return [event for event in events if isinstance(event, dict)]
+              except Exception:
+                  pass
+
+              # Fallback: JSON Lines / NDJSON
+              for line in text_body.splitlines():
+                  line = line.strip()
+
+                  if not line:
+                      continue
+
+                  try:
+                      item = json.loads(line)
+                      if isinstance(item, dict):
+                          events.append(item)
+                  except Exception:
+                      continue
+
+              return events
+
+          @app.post("/ebpf/events")
+          async def ingest_ebpf_events(request: Request):
+              body = await request.body()
+              text_body = body.decode("utf-8", errors="ignore")
+
+              events = _parse_event_payload(text_body)
+
+              EBPF_EVENTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+              accepted = 0
+
+              with EBPF_EVENTS_FILE.open("a", encoding="utf-8") as f:
+                  for event in events:
+                      event.setdefault("collector_received_at", datetime.utcnow().isoformat() + "Z")
+                      f.write(json.dumps(event, sort_keys=True) + "\n")
+                      accepted += 1
+
+              return {
+                  "status": "ok",
+                  "accepted_count": accepted,
+                  "total_count": _count_ebpf_events(),
+                  "store": str(EBPF_EVENTS_FILE),
+              }
+
+          @app.get("/ebpf/events/current")
+          def current_ebpf_events(limit: int = 100):
+              if not EBPF_EVENTS_FILE.exists():
+                  return {
+                      "status": "ok",
+                      "count": 0,
+                      "total_count": 0,
+                      "events": [],
+                  }
+
+              lines = EBPF_EVENTS_FILE.read_text(
+                  encoding="utf-8",
+                  errors="ignore",
+              ).splitlines()
+
+              selected = lines[-limit:]
+
+              events = []
+
+              for line in selected:
+                  try:
+                      events.append(json.loads(line))
+                  except Exception:
+                      pass
+
+              return {
+                  "status": "ok",
+                  "count": len(events),
+                  "total_count": _count_ebpf_events(),
+                  "events": events,
+              }
+
+          @app.delete("/ebpf/events")
+          def clear_ebpf_events():
+              EBPF_EVENTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+              EBPF_EVENTS_FILE.write_text("", encoding="utf-8")
+
+              return {
+                  "status": "ok",
+                  "message": "eBPF telemetry events cleared",
+                  "store": str(EBPF_EVENTS_FILE),
+              }
+
+    - name: Restart TE metrics collector
+      ansible.builtin.systemd:
+        name: sdn-te-metrics
+        state: restarted
+
+    - name: Wait for collector
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 8090
+        timeout: 30
+
+    - name: Check collector health
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8090/health
+        method: GET
+        return_content: true
+      register: health
+
+    - name: Show collector health
+      ansible.builtin.debug:
+        var: health.content
+
+
+- name: Deploy eBPF telemetry submitter on workload nodes
+  hosts: workloads
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Ensure submitter dependencies
+      ansible.builtin.apt:
+        name:
+          - curl
+          - jq
+        state: present
+        update_cache: true
+
+    - name: Create eBPF telemetry submitter script
+      ansible.builtin.copy:
+        dest: /opt/sdn-lab/ebpf/submit-json-telemetry-smoke.sh
+        owner: root
+        group: root
+        mode: "0755"
+        content: |
+          #!/usr/bin/env bash
+          set -euo pipefail
+
+          COLLECTOR_URL="http://10.60.10.11:8090/ebpf/events"
+          EVENTS="/opt/sdn-lab/ebpf/events/tcp-connect-events.jsonl"
+
+          echo "EBPF_TELEMETRY_SUBMIT_HOST=$(hostname)"
+          echo "EBPF_TELEMETRY_COLLECTOR=${COLLECTOR_URL}"
+
+          /opt/sdn-lab/ebpf/run-json-telemetry-smoke.sh >/tmp/ebpf-json-telemetry-smoke.out 2>&1
+
+          cat /tmp/ebpf-json-telemetry-smoke.out
+
+          if [ ! -s "$EVENTS" ]; then
+            echo "EBPF_TELEMETRY_NO_EVENTS"
+            exit 1
+          fi
+
+          echo "----- submit events -----"
+          cat "$EVENTS"
+
+          echo
+          echo "----- collector response -----"
+          curl -fsS \
+            -X POST \
+            -H "Content-Type: application/x-ndjson" \
+            --data-binary @"$EVENTS" \
+            "$COLLECTOR_URL" | jq
+
+          echo "EBPF_TELEMETRY_SUBMIT_DONE"

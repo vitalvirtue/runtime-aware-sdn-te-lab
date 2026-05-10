@@ -1,0 +1,42 @@
+- name: Verify eBPF TCP connect smoke on workload nodes
+  hosts: workloads
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Check tracepoint availability
+      ansible.builtin.shell: |
+        set -e
+
+        if bpftrace -l 'tracepoint:syscalls:sys_enter_connect' | grep -q 'tracepoint:syscalls:sys_enter_connect'; then
+          echo "TRACEPOINT_CONNECT_AVAILABLE"
+        else
+          echo "TRACEPOINT_CONNECT_MISSING"
+          exit 1
+        fi
+      args:
+        executable: /bin/bash
+      register: tracepoint_check
+
+    - name: Show tracepoint check
+      ansible.builtin.debug:
+        var: tracepoint_check.stdout_lines
+
+    - name: Run eBPF TCP connect smoke
+      ansible.builtin.shell: |
+        set -e
+        /opt/sdn-lab/ebpf/run-connect-smoke.sh
+      args:
+        executable: /bin/bash
+      register: ebpf_smoke
+      failed_when: >
+        'EBPF_CONNECT_TRACE_START' not in ebpf_smoke.stdout or
+        'CONNECT pid=' not in ebpf_smoke.stdout
+
+    - name: Show eBPF smoke output
+      ansible.builtin.debug:
+        var: ebpf_smoke.stdout_lines
+
+    - name: Mark node eBPF smoke passed
+      ansible.builtin.debug:
+        msg: "EBPF_TCP_CONNECT_SMOKE_PASS {{ inventory_hostname }}"

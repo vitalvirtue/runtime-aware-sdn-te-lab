@@ -1,0 +1,301 @@
+- name: Deploy persistent eBPF agent daemon on workload nodes
+  hosts: workloads
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Ensure eBPF agent dependencies
+      ansible.builtin.apt:
+        name:
+          - bpftrace
+          - python3
+          - curl
+          - jq
+        state: present
+        update_cache: true
+
+    - name: Create eBPF agent directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      loop:
+        - /opt/sdn-lab/ebpf
+        - /opt/sdn-lab/ebpf/agent
+        - /opt/sdn-lab/ebpf/scripts
+        - /opt/sdn-lab/ebpf/events
+        - /opt/sdn-lab/ebpf/logs
+
+    - name: Install tcp_v4_connect bpftrace program
+      ansible.builtin.copy:
+        dest: /opt/sdn-lab/ebpf/scripts/tcp-v4-connect-ip-port.bt
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          struct in_addr {
+            unsigned int s_addr;
+          };
+
+          struct sockaddr_in {
+            unsigned short sin_family;
+            unsigned short sin_port;
+            struct in_addr sin_addr;
+            unsigned char sin_zero[8];
+          };
+
+          BEGIN
+          {
+            printf("EBPF_TCP_V4_CONNECT_TRACE_START\n");
+          }
+
+          kprobe:tcp_v4_connect
+          /comm == "curl" || comm == "python3" || comm == "uvicorn" || comm == "nginx"/
+          {
+            $uaddr = (struct sockaddr_in *)arg1;
+            $daddr = $uaddr->sin_addr.s_addr;
+            $dport = $uaddr->sin_port;
+            $dport_host = (($dport >> 8) & 0xff) | (($dport & 0xff) << 8);
+
+            printf("TCP_CONNECT pid=%d comm=%s daddr=%s dport=%d\n",
+              pid,
+              comm,
+              ntop($daddr),
+              $dport_host
+            );
+          }
+
+          END
+          {
+            printf("EBPF_TCP_V4_CONNECT_TRACE_END\n");
+          }
+
+    - name: Install eBPF agent Python daemon
+      ansible.builtin.copy:
+        dest: /opt/sdn-lab/ebpf/agent/sdn-ebpf-agent.py
+        owner: root
+        group: root
+        mode: "0755"
+        content: |
+          #!/usr/bin/env python3
+          import json
+          import os
+          import re
+          import socket
+          import subprocess
+          import sys
+          import time
+          import urllib.request
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          COLLECTOR_URL = os.environ.get(
+              "SDN_EBPF_COLLECTOR_URL",
+              "http://10.60.10.11:8090/ebpf/events",
+          )
+
+          BPFTRACE_SCRIPT = os.environ.get(
+              "SDN_EBPF_BPFTRACE_SCRIPT",
+              "/opt/sdn-lab/ebpf/scripts/tcp-v4-connect-ip-port.bt",
+          )
+
+          LOCAL_EVENT_LOG = Path(
+              os.environ.get(
+                  "SDN_EBPF_LOCAL_EVENT_LOG",
+                  "/opt/sdn-lab/ebpf/events/agent-events.jsonl",
+              )
+          )
+
+          HOST = socket.gethostname()
+
+          SEGMENT_BY_HOST = {
+              "lab-sdn-app-web-01": "web",
+              "lab-sdn-app-api-01": "api",
+              "lab-sdn-data-db-01": "db",
+              "lab-sdn-app-bulk-01": "bulk",
+          }
+
+          SEGMENT = SEGMENT_BY_HOST.get(HOST, "unknown")
+
+          LINE_RE = re.compile(
+              r"TCP_CONNECT pid=(?P<pid>\d+) comm=(?P<comm>\S+) daddr=(?P<daddr>[0-9.]+) dport=(?P<dport>\d+)"
+          )
+
+          def classify_flow(segment: str, dst_ip: str, dst_port: int) -> str:
+              if segment == "web" and dst_ip == "172.31.210.12" and dst_port == 18080:
+                  return "web_to_api"
+
+              if segment == "api" and dst_ip == "172.31.210.13" and dst_port == 15432:
+                  return "critical_api_to_db"
+
+              if segment == "db" and dst_ip == "172.31.210.12" and dst_port == 18080:
+                  return "db_to_api"
+
+              if segment == "bulk" and dst_ip == "172.31.210.12" and dst_port == 18080:
+                  return "bulk_to_api"
+
+              if segment == "web" and dst_ip == "172.31.210.13":
+                  return "denied_web_to_db"
+
+              if segment == "bulk" and dst_ip == "172.31.210.13":
+                  return "denied_bulk_to_db"
+
+              return "unknown"
+
+          def post_event(event: dict) -> bool:
+              data = json.dumps(event).encode("utf-8")
+              req = urllib.request.Request(
+                  COLLECTOR_URL,
+                  data=data,
+                  headers={"Content-Type": "application/json"},
+                  method="POST",
+              )
+
+              try:
+                  with urllib.request.urlopen(req, timeout=5) as resp:
+                      resp.read()
+                  return True
+              except Exception as exc:
+                  print(f"POST_FAILED error={exc}", flush=True)
+                  return False
+
+          def append_local(event: dict) -> None:
+              LOCAL_EVENT_LOG.parent.mkdir(parents=True, exist_ok=True)
+              with LOCAL_EVENT_LOG.open("a", encoding="utf-8") as f:
+                  f.write(json.dumps(event, sort_keys=True) + "\n")
+
+          def build_event(match) -> dict:
+              dst_ip = match.group("daddr")
+              dst_port = int(match.group("dport"))
+
+              return {
+                  "event_type": "tcp_connect",
+                  "timestamp": datetime.now(timezone.utc).isoformat(),
+                  "host": HOST,
+                  "segment": SEGMENT,
+                  "pid": int(match.group("pid")),
+                  "comm": match.group("comm"),
+                  "dst_ip": dst_ip,
+                  "dst_port": dst_port,
+                  "flow_class": classify_flow(SEGMENT, dst_ip, dst_port),
+                  "source": "sdn-ebpf-agent:bpftrace:kprobe:tcp_v4_connect",
+              }
+
+          def run_agent() -> int:
+              print(f"SDN_EBPF_AGENT_START host={HOST} segment={SEGMENT} collector={COLLECTOR_URL}", flush=True)
+
+              cmd = ["bpftrace", BPFTRACE_SCRIPT]
+
+              proc = subprocess.Popen(
+                  cmd,
+                  stdout=subprocess.PIPE,
+                  stderr=subprocess.STDOUT,
+                  text=True,
+                  bufsize=1,
+              )
+
+              assert proc.stdout is not None
+
+              for line in proc.stdout:
+                  line = line.rstrip()
+                  print(line, flush=True)
+
+                  match = LINE_RE.search(line)
+                  if not match:
+                      continue
+
+                  event = build_event(match)
+
+                  if not event["dst_ip"].startswith("172.31.210."):
+                      continue
+
+                  if event["flow_class"] == "unknown":
+                      continue
+
+                  append_local(event)
+                  sent = post_event(event)
+
+                  print(
+                      "SDN_EBPF_EVENT_SENT "
+                      + json.dumps(
+                          {
+                              "sent": sent,
+                              "flow_class": event["flow_class"],
+                              "host": event["host"],
+                              "dst_ip": event["dst_ip"],
+                              "dst_port": event["dst_port"],
+                          },
+                          sort_keys=True,
+                      ),
+                      flush=True,
+                  )
+
+              return proc.wait()
+
+          if __name__ == "__main__":
+              while True:
+                  rc = run_agent()
+                  print(f"SDN_EBPF_AGENT_RESTART rc={rc}", flush=True)
+                  time.sleep(3)
+
+    - name: Create eBPF agent environment file
+      ansible.builtin.copy:
+        dest: /etc/sdn-ebpf-agent.env
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          SDN_EBPF_COLLECTOR_URL=http://10.60.10.11:8090/ebpf/events
+          SDN_EBPF_BPFTRACE_SCRIPT=/opt/sdn-lab/ebpf/scripts/tcp-v4-connect-ip-port.bt
+          SDN_EBPF_LOCAL_EVENT_LOG=/opt/sdn-lab/ebpf/events/agent-events.jsonl
+
+    - name: Create eBPF agent systemd service
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/sdn-ebpf-agent.service
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=SDN Lab eBPF Agent
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=simple
+          User=root
+          Group=root
+          EnvironmentFile=/etc/sdn-ebpf-agent.env
+          ExecStart=/usr/bin/python3 /opt/sdn-lab/ebpf/agent/sdn-ebpf-agent.py
+          Restart=always
+          RestartSec=3
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Enable and restart eBPF agent
+      ansible.builtin.systemd:
+        name: sdn-ebpf-agent
+        daemon_reload: true
+        enabled: true
+        state: restarted
+
+    - name: Wait for eBPF agent to attach
+      ansible.builtin.pause:
+        seconds: 5
+
+    - name: Check eBPF agent service status
+      ansible.builtin.shell: |
+        set -e
+        systemctl is-active sdn-ebpf-agent
+        journalctl -u sdn-ebpf-agent -n 20 --no-pager
+      args:
+        executable: /bin/bash
+      register: agent_status
+      changed_when: false
+
+    - name: Show eBPF agent status
+      ansible.builtin.debug:
+        var: agent_status.stdout_lines

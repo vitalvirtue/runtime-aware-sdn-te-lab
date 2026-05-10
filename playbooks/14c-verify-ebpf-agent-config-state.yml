@@ -1,0 +1,141 @@
+- name: Clear central eBPF event store
+  hosts: control
+  gather_facts: false
+
+  tasks:
+    - name: Clear eBPF events
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8090/ebpf/events
+        method: DELETE
+        return_content: true
+
+
+- name: Verify config-driven eBPF agent local state
+  hosts: workloads
+  become: true
+  gather_facts: false
+
+  vars:
+    expected_flow_class:
+      lab-sdn-app-web-01: "web_to_api"
+      lab-sdn-app-api-01: "critical_api_to_db"
+      lab-sdn-data-db-01: "db_to_api"
+      lab-sdn-app-bulk-01: "bulk_to_api"
+
+  tasks:
+    - name: Validate config file
+      ansible.builtin.shell: |
+        set -euo pipefail
+        jq -e '.host and .segment and .collector_url and .flow_rules' /etc/sdn-ebpf-agent/config.json >/dev/null
+        echo "EBPF_AGENT_CONFIG_VALIDATE_PASS"
+      args:
+        executable: /bin/bash
+      register: config_validate
+      changed_when: false
+
+    - name: Generate traffic for config-driven agent
+      ansible.builtin.shell: |
+        set -euo pipefail
+
+        HOST="$(hostname)"
+
+        case "$HOST" in
+          lab-sdn-app-web-01)
+            curl -fsS http://172.31.210.12:18080/health >/dev/null
+            ;;
+          lab-sdn-app-api-01)
+            curl -fsS http://172.31.210.13:15432/health >/dev/null
+            ;;
+          lab-sdn-data-db-01)
+            curl -fsS http://172.31.210.12:18080/health >/dev/null
+            ;;
+          lab-sdn-app-bulk-01)
+            curl -fsS http://172.31.210.12:18080/health >/dev/null
+            ;;
+        esac
+
+        sleep 1
+
+        cat /opt/sdn-lab/ebpf/state/agent_state.json | jq .
+      args:
+        executable: /bin/bash
+      register: local_state_raw
+      changed_when: true
+
+    - name: Read local state
+      ansible.builtin.slurp:
+        src: /opt/sdn-lab/ebpf/state/agent_state.json
+      register: local_state_slurp
+
+    - name: Parse local state
+      ansible.builtin.set_fact:
+        local_state: "{{ local_state_slurp.content | b64decode | from_json }}"
+
+    - name: Show local state
+      ansible.builtin.debug:
+        var: local_state
+
+    - name: Assert local config-driven state
+      ansible.builtin.assert:
+        that:
+          - local_state.status == "running"
+          - local_state.host == inventory_hostname
+          - local_state.event_count | int >= 1
+          - local_state.last_post_success == true
+          - local_state.last_event.flow_class == expected_flow_class[inventory_hostname]
+          - local_state.last_event.agent_config_version == "1"
+        success_msg: "EBPF_AGENT_CONFIG_LOCAL_STATE_PASS {{ inventory_hostname }}"
+        fail_msg: "Config-driven local agent state validation failed."
+
+
+- name: Verify config-driven events in collector
+  hosts: control
+  gather_facts: false
+
+  tasks:
+    - name: Wait for config-driven eBPF events
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8090/ebpf/events/current?limit=100
+        method: GET
+        return_content: true
+      register: current_events
+      until: >
+        ((current_events.content | from_json).count | int) >= 4
+      retries: 10
+      delay: 2
+
+    - name: Parse current eBPF events
+      ansible.builtin.set_fact:
+        ebpf_state: "{{ current_events.content | from_json }}"
+
+    - name: Extract flow classes and config versions
+      ansible.builtin.set_fact:
+        ebpf_flow_classes: "{{ ebpf_state.events | map(attribute='flow_class') | list }}"
+        ebpf_config_versions: "{{ ebpf_state.events | map(attribute='agent_config_version') | list }}"
+        ebpf_sources: "{{ ebpf_state.events | map(attribute='source') | list }}"
+
+    - name: Show collector events
+      ansible.builtin.debug:
+        msg:
+          count: "{{ ebpf_state.count }}"
+          flow_classes: "{{ ebpf_flow_classes }}"
+          config_versions: "{{ ebpf_config_versions }}"
+          sources: "{{ ebpf_sources }}"
+
+    - name: Assert config-driven events in collector
+      ansible.builtin.assert:
+        that:
+          - ebpf_state.status == "ok"
+          - ebpf_state.count | int >= 4
+          - "'web_to_api' in ebpf_flow_classes"
+          - "'critical_api_to_db' in ebpf_flow_classes"
+          - "'db_to_api' in ebpf_flow_classes"
+          - "'bulk_to_api' in ebpf_flow_classes"
+          - "'1' in ebpf_config_versions"
+          - "'sdn-ebpf-agent:config-v1:bpftrace:kprobe:tcp_v4_connect' in ebpf_sources"
+        success_msg: "EBPF_AGENT_CONFIG_COLLECTOR_PASS"
+        fail_msg: "Config-driven agent collector validation failed."
+
+    - name: Mark milestone 14C passed
+      ansible.builtin.debug:
+        msg: "SDN_EBPF_AGENT_CONFIG_STATE_PASS"
