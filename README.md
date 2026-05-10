@@ -60,4 +60,6 @@ Main documentation files:
 - docs/stable-demo-wrapper.md
 - docs/milestones.md
 - docs/roadmap.md
+- docs/test-matrix.md
+- docs/validation-index.md
 
