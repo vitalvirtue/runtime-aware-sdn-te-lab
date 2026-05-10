@@ -1,0 +1,8 @@
+lab-sdn-core-fabric-01 | SUCCESS => {"changed": false,"ping": "pong"}
+lab-sdn-ctrl-onos-01 | SUCCESS => {"changed": false,"ping": "pong"}
+lab-sdn-edge-ovs-b-01 | SUCCESS => {"changed": false,"ping": "pong"}
+lab-sdn-app-api-01 | SUCCESS => {"changed": false,"ping": "pong"}
+lab-sdn-edge-ovs-a-01 | SUCCESS => {"changed": false,"ping": "pong"}
+lab-sdn-app-bulk-01 | SUCCESS => {"changed": false,"ping": "pong"}
+lab-sdn-app-web-01 | SUCCESS => {"changed": false,"ping": "pong"}
+lab-sdn-data-db-01 | SUCCESS => {"changed": false,"ping": "pong"}

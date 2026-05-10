@@ -1,0 +1,74 @@
+lab-sdn-edge-ovs-a-01 | CHANGED | rc=0 >>
+lab-sdn-edge-ovs-a-01
+f54d5142-0238-4525-a983-7b63e746e84e
+    Bridge br-edge0
+        fail_mode: standalone
+        Port vxlan-web
+            Interface vxlan-web
+                type: vxlan
+                options: {dst_port="4789", key="100", remote_ip="10.60.20.31"}
+        Port path2-to-b
+            Interface path2-to-b
+        Port vx-api-te
+            Interface vx-api-te
+                type: vxlan
+                options: {dst_port="4789", key="312", remote_ip="10.60.20.32"}
+        Port path1-to-b
+            Interface path1-to-b
+        Port vxlan-api
+            Interface vxlan-api
+                type: vxlan
+                options: {dst_port="4789", key="100", remote_ip="10.60.20.32"}
+        Port vx-web-te
+            Interface vx-web-te
+                type: vxlan
+                options: {dst_port="4789", key="311", remote_ip="10.60.20.31"}
+        Port br-edge0
+            Interface br-edge0
+                type: internal
+        Port vxlan-bulk
+            Interface vxlan-bulk
+                type: vxlan
+                options: {dst_port="4789", key="100", remote_ip="10.60.20.34"}
+        Port vxlan-db
+            Interface vxlan-db
+                type: vxlan
+                options: {dst_port="4789", key="100", remote_ip="10.60.20.33"}
+    ovs_version: "3.1.0"
+OFPST_FLOW reply (OF1.3) (xid=0x2):
+ cookie=0x0, duration=76990.473s, table=0, n_packets=91, n_bytes=7267, priority=400,ip,nw_src=172.31.210.11,nw_dst=172.31.210.12 actions=output:28
+ cookie=0x0, duration=76990.464s, table=0, n_packets=65, n_bytes=7774, priority=400,ip,nw_src=172.31.210.12,nw_dst=172.31.210.11 actions=output:27
+ cookie=0x0, duration=76990.435s, table=0, n_packets=616, n_bytes=49192, priority=400,ip,nw_src=172.31.210.14,nw_dst=172.31.210.12 actions=output:28
+ cookie=0x0, duration=76990.426s, table=0, n_packets=440, n_bytes=52624, priority=400,ip,nw_src=172.31.210.12,nw_dst=172.31.210.14 actions=output:32
+ cookie=0x0, duration=76990.417s, table=0, n_packets=0, n_bytes=0, priority=500,ip,nw_src=172.31.210.11,nw_dst=172.31.210.13 actions=drop
+ cookie=0x0, duration=74138.167s, table=0, n_packets=261, n_bytes=23426, priority=400,ip,nw_src=172.31.210.12,nw_dst=172.31.210.13 actions=output:31
+ cookie=0x0, duration=74138.142s, table=0, n_packets=231, n_bytes=22891, priority=400,ip,nw_src=172.31.210.13,nw_dst=172.31.210.12 actions=output:28
+ cookie=0x0, duration=76990.408s, table=0, n_packets=220, n_bytes=15842, priority=0 actions=drop
+lab-sdn-edge-ovs-b-01 | CHANGED | rc=0 >>
+lab-sdn-edge-ovs-b-01
+7d6cc428-96f1-4ec9-895d-642eb337a0b5
+    Bridge br-edge0
+        fail_mode: standalone
+        Port path2-to-a
+            Interface path2-to-a
+        Port br-edge0
+            Interface br-edge0
+                type: internal
+        Port vx-bulk-te
+            Interface vx-bulk-te
+                type: vxlan
+                options: {dst_port="4789", key="314", remote_ip="10.60.20.34"}
+        Port vx-db-te
+            Interface vx-db-te
+                type: vxlan
+                options: {dst_port="4789", key="313", remote_ip="10.60.20.33"}
+        Port path1-to-a
+            Interface path1-to-a
+    ovs_version: "3.1.0"
+OFPST_FLOW reply (OF1.3) (xid=0x2):
+ cookie=0x0, duration=76990.189s, table=0, n_packets=616, n_bytes=49192, priority=400,ip,nw_src=172.31.210.14,nw_dst=172.31.210.12 actions=output:28
+ cookie=0x0, duration=76990.180s, table=0, n_packets=440, n_bytes=52624, priority=400,ip,nw_src=172.31.210.12,nw_dst=172.31.210.14 actions=output:24
+ cookie=0x0, duration=76990.171s, table=0, n_packets=0, n_bytes=0, priority=500,ip,nw_src=172.31.210.14,nw_dst=172.31.210.13 actions=drop
+ cookie=0x0, duration=74137.865s, table=0, n_packets=261, n_bytes=23426, priority=400,ip,nw_src=172.31.210.12,nw_dst=172.31.210.13 actions=output:23
+ cookie=0x0, duration=74137.840s, table=0, n_packets=231, n_bytes=22891, priority=400,ip,nw_src=172.31.210.13,nw_dst=172.31.210.12 actions=output:27
+ cookie=0x0, duration=76990.162s, table=0, n_packets=122, n_bytes=8733, priority=0 actions=drop

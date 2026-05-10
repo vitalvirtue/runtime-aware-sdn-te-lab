@@ -1,0 +1,23 @@
+@all:
+  |--@ungrouped:
+  |--@proxmox_api:
+  |  |--localhost
+  |--@pve_ssh:
+  |  |--pve-host
+  |--@lab:
+  |  |--@control:
+  |  |  |--lab-sdn-ctrl-onos-01
+  |  |--@fabric:
+  |  |  |--lab-sdn-core-fabric-01
+  |  |--@edge:
+  |  |  |--lab-sdn-edge-ovs-a-01
+  |  |  |--lab-sdn-edge-ovs-b-01
+  |  |--@workloads:
+  |  |  |--@web:
+  |  |  |  |--lab-sdn-app-web-01
+  |  |  |--@api:
+  |  |  |  |--lab-sdn-app-api-01
+  |  |  |--@db:
+  |  |  |  |--lab-sdn-data-db-01
+  |  |  |--@bulk:
+  |  |  |  |--lab-sdn-app-bulk-01

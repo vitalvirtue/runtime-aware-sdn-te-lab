@@ -1,0 +1,13 @@
+lab-sdn-ctrl-onos-01 | CHANGED | rc=0 >>
+{
+  "status": "ok",
+  "service": "te-metrics-collector",
+  "timestamp": "2026-05-10T16:57:07.175707Z",
+  "ssh_key": "/home/automation/.ssh/id_ed25519_te_metrics"
+}
+{
+  "total_agents": 4,
+  "healthy": 0,
+  "stale": 4,
+  "missing": 0
+}

@@ -1,0 +1,17 @@
+lab-sdn-ctrl-onos-01 | CHANGED | rc=0 >>
+lab-sdn-ctrl-onos-01
+  dbus.service                loaded active running D-Bus System Message Bus
+  sdn-policy-api.service      loaded active running SDN Lab Policy Controller API
+  sdn-te-actuator.service     loaded active running SDN Lab TE Actuator API
+  sdn-te-decision.service     loaded active running SDN Lab TE Decision Engine
+  sdn-te-metrics.service      loaded active running SDN Lab TE Metrics Collector
+  systemd-journald.service    loaded active running Journal Service
+  systemd-logind.service      loaded active running User Login Management
+  systemd-networkd.service    loaded active running Network Configuration
+  systemd-resolved.service    loaded active running Network Name Resolution
+  systemd-timesyncd.service   loaded active running Network Time Synchronization
+  systemd-udevd.service       loaded active running Rule-based Manager for Device Events and Files
+  unattended-upgrades.service loaded active running Unattended Upgrades Shutdown
+ACTIVE = The high-level unit activation state, i.e. generalization of SUB.
+SUB    = The low-level unit activation state, values depend on unit type.
+19 loaded units listed.

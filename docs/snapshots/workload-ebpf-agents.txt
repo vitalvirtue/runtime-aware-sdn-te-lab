@@ -1,0 +1,36 @@
+lab-sdn-data-db-01 | CHANGED | rc=0 >>
+lab-sdn-data-db-01
+active
+{
+  "host": "lab-sdn-data-db-01",
+  "segment": "db",
+  "collector_url": "http://10.60.10.11:8090/ebpf/events",
+  "source": "sdn-ebpf-agent:config-v1:bpftrace:kprobe:tcp_v4_connect"
+}
+lab-sdn-app-web-01 | CHANGED | rc=0 >>
+lab-sdn-app-web-01
+active
+{
+  "host": "lab-sdn-app-web-01",
+  "segment": "web",
+  "collector_url": "http://10.60.10.11:8090/ebpf/events",
+  "source": "sdn-ebpf-agent:config-v1:bpftrace:kprobe:tcp_v4_connect"
+}
+lab-sdn-app-bulk-01 | CHANGED | rc=0 >>
+lab-sdn-app-bulk-01
+active
+{
+  "host": "lab-sdn-app-bulk-01",
+  "segment": "bulk",
+  "collector_url": "http://10.60.10.11:8090/ebpf/events",
+  "source": "sdn-ebpf-agent:config-v1:bpftrace:kprobe:tcp_v4_connect"
+}
+lab-sdn-app-api-01 | CHANGED | rc=0 >>
+lab-sdn-app-api-01
+active
+{
+  "host": "lab-sdn-app-api-01",
+  "segment": "api",
+  "collector_url": "http://10.60.10.11:8090/ebpf/events",
+  "source": "sdn-ebpf-agent:config-v1:bpftrace:kprobe:tcp_v4_connect"
+}
