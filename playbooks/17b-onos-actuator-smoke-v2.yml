@@ -1,0 +1,497 @@
+- name: Install ONOS-backed bidirectional critical flow over path-2
+  hosts: control
+  gather_facts: false
+
+  vars:
+    onos_rest: "http://127.0.0.1:8181/onos/v1"
+    onos_auth: "onos:rocks"
+    edge_a_device: "of:00000000000000a1"
+    edge_b_device: "of:00000000000000b1"
+    api_ip: "172.31.210.12"
+    db_ip: "172.31.210.13"
+    edge_a_path2_to_b_port: "32"
+    edge_b_path2_to_a_port: "28"
+    edge_a_vx_api_te_port: "28"
+    edge_b_vx_db_te_port: "23"
+    flow_priority: 65000
+
+  tasks:
+    - name: Activate ONOS forwarding helper app for ARP and packet handling
+      ansible.builtin.shell: |
+        set -euo pipefail
+
+        ONOS_REST="{{ onos_rest }}"
+        AUTH="{{ onos_auth }}"
+
+        curl -sf -u "$AUTH" -X POST "$ONOS_REST/applications/org.onosproject.fwd/active" >/dev/null || true
+
+        sleep 3
+
+        curl -s -u "$AUTH" "$ONOS_REST/applications" | jq '
+          .applications[]
+          | select(.name | test("openflow|fwd|drivers"))
+          | {name,state}
+        '
+      args:
+        executable: /bin/bash
+      register: onos_fwd_app
+      changed_when: true
+
+    - name: Show ONOS app state
+      ansible.builtin.debug:
+        var: onos_fwd_app.stdout_lines
+
+    - name: Install path-2 bidirectional ONOS flows
+      ansible.builtin.shell: |
+        set -euo pipefail
+
+        ONOS_REST="{{ onos_rest }}"
+        AUTH="{{ onos_auth }}"
+        PRIORITY="{{ flow_priority }}"
+
+        API="{{ api_ip }}"
+        DB="{{ db_ip }}"
+
+        EDGE_A="{{ edge_a_device }}"
+        EDGE_B="{{ edge_b_device }}"
+
+        A_PATH2="{{ edge_a_path2_to_b_port }}"
+        B_PATH2="{{ edge_b_path2_to_a_port }}"
+        A_VX_API="{{ edge_a_vx_api_te_port }}"
+        B_VX_DB="{{ edge_b_vx_db_te_port }}"
+
+        enc_device() {
+          python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=""))' "$1"
+        }
+
+        delete_ip_pair_flows() {
+          device="$1"
+          src1="$2"
+          dst1="$3"
+          src2="$4"
+          dst2="$5"
+
+          dev_enc="$(enc_device "$device")"
+
+          IDS="$(curl -s -u "$AUTH" "$ONOS_REST/flows/$dev_enc" | jq -r \
+            --arg s1 "$src1/32" \
+            --arg d1 "$dst1/32" \
+            --arg s2 "$src2/32" \
+            --arg d2 "$dst2/32" '
+              .flows[]
+              | select(
+                  (
+                    any(.selector.criteria[]?; .type=="IPV4_SRC" and .ip==$s1)
+                    and
+                    any(.selector.criteria[]?; .type=="IPV4_DST" and .ip==$d1)
+                  )
+                  or
+                  (
+                    any(.selector.criteria[]?; .type=="IPV4_SRC" and .ip==$s2)
+                    and
+                    any(.selector.criteria[]?; .type=="IPV4_DST" and .ip==$d2)
+                  )
+                )
+              | .id
+            ' || true)"
+
+          for id in $IDS; do
+            echo "Deleting device=$device flow=$id"
+            curl -sf -u "$AUTH" -X DELETE "$ONOS_REST/flows/$dev_enc/$id" >/dev/null || true
+          done
+        }
+
+        install_ip_flow() {
+          device="$1"
+          src="$2"
+          dst="$3"
+          out_port="$4"
+          label="$5"
+
+          dev_enc="$(enc_device "$device")"
+
+          cat > "/tmp/${label}.json" <<JSON
+        {
+          "priority": $PRIORITY,
+          "timeout": 0,
+          "isPermanent": true,
+          "deviceId": "$device",
+          "treatment": {
+            "instructions": [
+              {
+                "type": "OUTPUT",
+                "port": "$out_port"
+              }
+            ]
+          },
+          "selector": {
+            "criteria": [
+              {
+                "type": "ETH_TYPE",
+                "ethType": "0x0800"
+              },
+              {
+                "type": "IPV4_SRC",
+                "ip": "$src/32"
+              },
+              {
+                "type": "IPV4_DST",
+                "ip": "$dst/32"
+              }
+            ]
+          }
+        }
+        JSON
+
+          echo "Installing $label device=$device src=$src dst=$dst out=$out_port"
+
+          curl -sf -u "$AUTH" \
+            -H "Content-Type: application/json" \
+            -X POST \
+            --data-binary "@/tmp/${label}.json" \
+            "$ONOS_REST/flows/$dev_enc" >/dev/null
+        }
+
+        wait_ip_flow() {
+          device="$1"
+          src="$2"
+          dst="$3"
+          out_port="$4"
+          label="$5"
+
+          dev_enc="$(enc_device "$device")"
+
+          for i in $(seq 1 20); do
+            FLOWS="$(curl -s -u "$AUTH" "$ONOS_REST/flows/$dev_enc")"
+
+            OK="$(echo "$FLOWS" | jq -r \
+              --arg src "$src/32" \
+              --arg dst "$dst/32" \
+              --arg out "$out_port" '
+                .flows[]
+                | select(.state=="ADDED")
+                | select(any(.selector.criteria[]?; .type=="IPV4_SRC" and .ip==$src))
+                | select(any(.selector.criteria[]?; .type=="IPV4_DST" and .ip==$dst))
+                | select(any(.treatment.instructions[]?; .type=="OUTPUT" and .port==$out))
+                | .id
+              ' | head -n1)"
+
+            if [ -n "$OK" ]; then
+              echo "ONOS_FLOW_ADDED label=$label device=$device id=$OK"
+              return 0
+            fi
+
+            sleep 2
+          done
+
+          echo "ERROR missing ONOS flow label=$label device=$device"
+          exit 1
+        }
+
+        echo "== Cleanup old API<->DB ONOS flows =="
+        delete_ip_pair_flows "$EDGE_A" "$API" "$DB" "$DB" "$API"
+        delete_ip_pair_flows "$EDGE_B" "$API" "$DB" "$DB" "$API"
+
+        sleep 2
+
+        echo "== Install path-2 flows =="
+        install_ip_flow "$EDGE_A" "$API" "$DB" "$A_PATH2" "edge_a_api_to_db_path2"
+        install_ip_flow "$EDGE_B" "$API" "$DB" "$B_VX_DB" "edge_b_api_to_db_to_dbvx"
+        install_ip_flow "$EDGE_B" "$DB" "$API" "$B_PATH2" "edge_b_db_to_api_path2"
+        install_ip_flow "$EDGE_A" "$DB" "$API" "$A_VX_API" "edge_a_db_to_api_to_apivx"
+
+        echo "== Wait for ADDED state =="
+        wait_ip_flow "$EDGE_A" "$API" "$DB" "$A_PATH2" "edge_a_api_to_db_path2"
+        wait_ip_flow "$EDGE_B" "$API" "$DB" "$B_VX_DB" "edge_b_api_to_db_to_dbvx"
+        wait_ip_flow "$EDGE_B" "$DB" "$API" "$B_PATH2" "edge_b_db_to_api_path2"
+        wait_ip_flow "$EDGE_A" "$DB" "$API" "$A_VX_API" "edge_a_db_to_api_to_apivx"
+
+        echo "ONOS_PATH2_BIDIRECTIONAL_FLOWS_ADDED"
+      args:
+        executable: /bin/bash
+      register: onos_path2_bidir
+      changed_when: true
+
+    - name: Show ONOS path-2 bidirectional flow result
+      ansible.builtin.debug:
+        var: onos_path2_bidir.stdout_lines
+
+
+- name: Verify ONOS path-2 flows on OVS edge nodes
+  hosts: edge
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Dump ONOS-installed OVS flows
+      ansible.builtin.shell: |
+        set -euo pipefail
+
+        HOST="$(hostname)"
+
+        echo "HOST=$HOST"
+        ovs-ofctl -O OpenFlow13 dump-flows br-edge0 | tee /tmp/onos-bidir-path2-flows.txt
+
+        if [ "$HOST" = "lab-sdn-edge-ovs-a-01" ]; then
+          grep -E "priority=65000.*nw_src=172.31.210.12.*nw_dst=172.31.210.13.*actions=output:32" /tmp/onos-bidir-path2-flows.txt
+          grep -E "priority=65000.*nw_src=172.31.210.13.*nw_dst=172.31.210.12.*actions=output:28" /tmp/onos-bidir-path2-flows.txt
+        fi
+
+        if [ "$HOST" = "lab-sdn-edge-ovs-b-01" ]; then
+          grep -E "priority=65000.*nw_src=172.31.210.12.*nw_dst=172.31.210.13.*actions=output:23" /tmp/onos-bidir-path2-flows.txt
+          grep -E "priority=65000.*nw_src=172.31.210.13.*nw_dst=172.31.210.12.*actions=output:28" /tmp/onos-bidir-path2-flows.txt
+        fi
+
+        echo "OVS_ONOS_PATH2_BIDIRECTIONAL_FLOWS_PRESENT host=$HOST"
+      args:
+        executable: /bin/bash
+      register: ovs_path2_bidir
+      changed_when: false
+
+    - name: Show OVS path-2 bidirectional flow result
+      ansible.builtin.debug:
+        var: ovs_path2_bidir.stdout_lines
+
+
+- name: Verify critical api to db traffic over ONOS path-2
+  hosts: api
+  gather_facts: false
+
+  tasks:
+    - name: Curl DB health after ONOS bidirectional path-2 flows
+      ansible.builtin.shell: |
+        set -euo pipefail
+
+        curl --connect-timeout 10 --max-time 20 -fsS http://172.31.210.13:15432/health
+
+        echo "API_TO_DB_HEALTH_OVER_ONOS_PATH2_PASS"
+      args:
+        executable: /bin/bash
+      register: api_db_health_path2
+      changed_when: false
+
+    - name: Show API to DB path-2 health result
+      ansible.builtin.debug:
+        var: api_db_health_path2.stdout_lines
+
+
+- name: Restore critical api to db flow to path-1 through ONOS
+  hosts: control
+  gather_facts: false
+
+  vars:
+    onos_rest: "http://127.0.0.1:8181/onos/v1"
+    onos_auth: "onos:rocks"
+    edge_a_device: "of:00000000000000a1"
+    edge_b_device: "of:00000000000000b1"
+    api_ip: "172.31.210.12"
+    db_ip: "172.31.210.13"
+    edge_a_path1_to_b_port: "31"
+    edge_b_path1_to_a_port: "27"
+    edge_a_vx_api_te_port: "28"
+    edge_b_vx_db_te_port: "23"
+    flow_priority: 65000
+
+  tasks:
+    - name: Restore path-1 bidirectional ONOS flows
+      ansible.builtin.shell: |
+        set -euo pipefail
+
+        ONOS_REST="{{ onos_rest }}"
+        AUTH="{{ onos_auth }}"
+        PRIORITY="{{ flow_priority }}"
+
+        API="{{ api_ip }}"
+        DB="{{ db_ip }}"
+
+        EDGE_A="{{ edge_a_device }}"
+        EDGE_B="{{ edge_b_device }}"
+
+        A_PATH1="{{ edge_a_path1_to_b_port }}"
+        B_PATH1="{{ edge_b_path1_to_a_port }}"
+        A_VX_API="{{ edge_a_vx_api_te_port }}"
+        B_VX_DB="{{ edge_b_vx_db_te_port }}"
+
+        enc_device() {
+          python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=""))' "$1"
+        }
+
+        delete_ip_pair_flows() {
+          device="$1"
+          dev_enc="$(enc_device "$device")"
+
+          IDS="$(curl -s -u "$AUTH" "$ONOS_REST/flows/$dev_enc" | jq -r \
+            --arg api "$API/32" \
+            --arg db "$DB/32" '
+              .flows[]
+              | select(
+                  (
+                    any(.selector.criteria[]?; .type=="IPV4_SRC" and .ip==$api)
+                    and
+                    any(.selector.criteria[]?; .type=="IPV4_DST" and .ip==$db)
+                  )
+                  or
+                  (
+                    any(.selector.criteria[]?; .type=="IPV4_SRC" and .ip==$db)
+                    and
+                    any(.selector.criteria[]?; .type=="IPV4_DST" and .ip==$api)
+                  )
+                )
+              | .id
+            ' || true)"
+
+          for id in $IDS; do
+            echo "Deleting device=$device flow=$id"
+            curl -sf -u "$AUTH" -X DELETE "$ONOS_REST/flows/$dev_enc/$id" >/dev/null || true
+          done
+        }
+
+        install_ip_flow() {
+          device="$1"
+          src="$2"
+          dst="$3"
+          out_port="$4"
+          label="$5"
+
+          dev_enc="$(enc_device "$device")"
+
+          cat > "/tmp/${label}.json" <<JSON
+        {
+          "priority": $PRIORITY,
+          "timeout": 0,
+          "isPermanent": true,
+          "deviceId": "$device",
+          "treatment": {
+            "instructions": [
+              {
+                "type": "OUTPUT",
+                "port": "$out_port"
+              }
+            ]
+          },
+          "selector": {
+            "criteria": [
+              {
+                "type": "ETH_TYPE",
+                "ethType": "0x0800"
+              },
+              {
+                "type": "IPV4_SRC",
+                "ip": "$src/32"
+              },
+              {
+                "type": "IPV4_DST",
+                "ip": "$dst/32"
+              }
+            ]
+          }
+        }
+        JSON
+
+          echo "Installing $label device=$device src=$src dst=$dst out=$out_port"
+
+          curl -sf -u "$AUTH" \
+            -H "Content-Type: application/json" \
+            -X POST \
+            --data-binary "@/tmp/${label}.json" \
+            "$ONOS_REST/flows/$dev_enc" >/dev/null
+        }
+
+        wait_ip_flow() {
+          device="$1"
+          src="$2"
+          dst="$3"
+          out_port="$4"
+          label="$5"
+
+          dev_enc="$(enc_device "$device")"
+
+          for i in $(seq 1 20); do
+            FLOWS="$(curl -s -u "$AUTH" "$ONOS_REST/flows/$dev_enc")"
+
+            OK="$(echo "$FLOWS" | jq -r \
+              --arg src "$src/32" \
+              --arg dst "$dst/32" \
+              --arg out "$out_port" '
+                .flows[]
+                | select(.state=="ADDED")
+                | select(any(.selector.criteria[]?; .type=="IPV4_SRC" and .ip==$src))
+                | select(any(.selector.criteria[]?; .type=="IPV4_DST" and .ip==$dst))
+                | select(any(.treatment.instructions[]?; .type=="OUTPUT" and .port==$out))
+                | .id
+              ' | head -n1)"
+
+            if [ -n "$OK" ]; then
+              echo "ONOS_RESTORE_FLOW_ADDED label=$label device=$device id=$OK"
+              return 0
+            fi
+
+            sleep 2
+          done
+
+          echo "ERROR restore flow missing label=$label device=$device"
+          exit 1
+        }
+
+        echo "== Cleanup old API<->DB ONOS flows =="
+        delete_ip_pair_flows "$EDGE_A"
+        delete_ip_pair_flows "$EDGE_B"
+
+        sleep 2
+
+        echo "== Install path-1 restore flows =="
+        install_ip_flow "$EDGE_A" "$API" "$DB" "$A_PATH1" "edge_a_api_to_db_path1"
+        install_ip_flow "$EDGE_B" "$API" "$DB" "$B_VX_DB" "edge_b_api_to_db_to_dbvx"
+        install_ip_flow "$EDGE_B" "$DB" "$API" "$B_PATH1" "edge_b_db_to_api_path1"
+        install_ip_flow "$EDGE_A" "$DB" "$API" "$A_VX_API" "edge_a_db_to_api_to_apivx"
+
+        wait_ip_flow "$EDGE_A" "$API" "$DB" "$A_PATH1" "edge_a_api_to_db_path1"
+        wait_ip_flow "$EDGE_B" "$API" "$DB" "$B_VX_DB" "edge_b_api_to_db_to_dbvx"
+        wait_ip_flow "$EDGE_B" "$DB" "$API" "$B_PATH1" "edge_b_db_to_api_path1"
+        wait_ip_flow "$EDGE_A" "$DB" "$API" "$A_VX_API" "edge_a_db_to_api_to_apivx"
+
+        echo "ONOS_PATH1_RESTORE_BIDIRECTIONAL_FLOWS_ADDED"
+      args:
+        executable: /bin/bash
+      register: onos_path1_restore
+      changed_when: true
+
+    - name: Show ONOS path-1 restore result
+      ansible.builtin.debug:
+        var: onos_path1_restore.stdout_lines
+
+
+- name: Verify restored path-1 flow and mark pass
+  hosts: edge
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Verify restored path-1 OpenFlow rules on edge nodes
+      ansible.builtin.shell: |
+        set -euo pipefail
+
+        HOST="$(hostname)"
+
+        echo "HOST=$HOST"
+        ovs-ofctl -O OpenFlow13 dump-flows br-edge0 | tee /tmp/onos-bidir-path1-flows.txt
+
+        if [ "$HOST" = "lab-sdn-edge-ovs-a-01" ]; then
+          grep -E "priority=65000.*nw_src=172.31.210.12.*nw_dst=172.31.210.13.*actions=output:31" /tmp/onos-bidir-path1-flows.txt
+          grep -E "priority=65000.*nw_src=172.31.210.13.*nw_dst=172.31.210.12.*actions=output:28" /tmp/onos-bidir-path1-flows.txt
+        fi
+
+        if [ "$HOST" = "lab-sdn-edge-ovs-b-01" ]; then
+          grep -E "priority=65000.*nw_src=172.31.210.12.*nw_dst=172.31.210.13.*actions=output:23" /tmp/onos-bidir-path1-flows.txt
+          grep -E "priority=65000.*nw_src=172.31.210.13.*nw_dst=172.31.210.12.*actions=output:27" /tmp/onos-bidir-path1-flows.txt
+        fi
+
+        echo "OVS_ONOS_PATH1_RESTORE_FLOWS_PRESENT host=$HOST"
+      args:
+        executable: /bin/bash
+      register: ovs_path1_restore
+      changed_when: false
+
+    - name: Mark 17B v2 passed
+      ansible.builtin.debug:
+        msg: "ONOS_ACTUATOR_BIDIRECTIONAL_SMOKE_PASS"
