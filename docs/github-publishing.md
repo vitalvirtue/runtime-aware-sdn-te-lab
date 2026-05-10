@@ -26,7 +26,7 @@ Run repository hygiene check:
 
 ./scripts/maintenance/check-repo-hygiene.sh
 
-Run stable demo plan check if available:
+Run stable demo plan check:
 
 ./scripts/demo/check-stable-demo-plan.sh
 

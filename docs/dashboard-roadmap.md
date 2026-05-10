@@ -4,7 +4,7 @@
 
 A small read-only dashboard can make the project easier to demo and understand.
 
-The dashboard should not become a large product UI at this stage. It should simply visualize the current controller-side APIs.
+The dashboard should not become a large product UI at this stage. It should visualize the current controller-side APIs.
 
 ## Recommended First Version
 
@@ -34,8 +34,6 @@ Recommended stack:
 - no authentication for local lab demo
 
 ## Existing APIs To Use
-
-Potential API sources:
 
 | API | Purpose |
 |---|---|

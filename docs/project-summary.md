@@ -24,15 +24,21 @@ The lab includes:
 
 ## Main Technical Value
 
-The project connects two visibility layers:
+The project connects two visibility layers.
 
-1. Host runtime telemetry
+Host runtime telemetry:
 
-   Which process on which workload node initiated a TCP connection?
+- which process initiated a connection
+- on which workload node
+- from which segment
+- to which destination IP and port
 
-2. Network telemetry
+Network telemetry:
 
-   Which flow_class, path, counter and latency behavior was observed in the network?
+- which flow_class was observed
+- which path was used
+- what latency was measured
+- what packet counters were observed
 
 The correlation layer joins these views by flow_class.
 
