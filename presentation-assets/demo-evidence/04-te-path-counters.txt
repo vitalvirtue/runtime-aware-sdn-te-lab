@@ -1,0 +1,194 @@
+
+PLAY [Configure workload VXLAN endpoints for two-edge TE baseline] *************
+
+TASK [Install workload networking tools] ***************************************
+ok: [lab-sdn-app-api-01]
+ok: [lab-sdn-app-bulk-01]
+ok: [lab-sdn-data-db-01]
+ok: [lab-sdn-app-web-01]
+
+TASK [Configure workload VXLAN interface] **************************************
+changed: [lab-sdn-app-api-01]
+changed: [lab-sdn-data-db-01]
+changed: [lab-sdn-app-web-01]
+changed: [lab-sdn-app-bulk-01]
+
+TASK [Show workload VXLAN result] **********************************************
+ok: [lab-sdn-app-web-01] => {
+    "workload_vxlan.stdout_lines": [
+        "TE_WORKLOAD_VXLAN_READY host=lab-sdn-app-web-01 local_underlay=10.60.20.31 edge=10.60.20.21 vni=311 overlay=172.31.210.11/24"
+    ]
+}
+ok: [lab-sdn-app-api-01] => {
+    "workload_vxlan.stdout_lines": [
+        "TE_WORKLOAD_VXLAN_READY host=lab-sdn-app-api-01 local_underlay=10.60.20.32 edge=10.60.20.21 vni=312 overlay=172.31.210.12/24"
+    ]
+}
+ok: [lab-sdn-data-db-01] => {
+    "workload_vxlan.stdout_lines": [
+        "TE_WORKLOAD_VXLAN_READY host=lab-sdn-data-db-01 local_underlay=10.60.20.33 edge=10.60.20.22 vni=313 overlay=172.31.210.13/24"
+    ]
+}
+ok: [lab-sdn-app-bulk-01] => {
+    "workload_vxlan.stdout_lines": [
+        "TE_WORKLOAD_VXLAN_READY host=lab-sdn-app-bulk-01 local_underlay=10.60.20.34 edge=10.60.20.22 vni=314 overlay=172.31.210.14/24"
+    ]
+}
+
+PLAY [Configure edge-a for two-path TE baseline] *******************************
+
+TASK [Ensure OVS bridge baseline] **********************************************
+changed: [lab-sdn-edge-ovs-a-01]
+
+TASK [Remove old TE ports on edge-a] *******************************************
+changed: [lab-sdn-edge-ovs-a-01]
+
+TASK [Create workload and path VXLAN ports on edge-a] **************************
+changed: [lab-sdn-edge-ovs-a-01]
+
+TASK [Install edge-a traffic engineering flows] ********************************
+changed: [lab-sdn-edge-ovs-a-01]
+
+TASK [Show edge-a flows] *******************************************************
+ok: [lab-sdn-edge-ovs-a-01] => {
+    "edge_a_flows.stdout_lines": [
+        "EDGE_A_PORTS web=57 api=58 path1=59 path2=60",
+        "OFPST_FLOW reply (OF1.3) (xid=0x2):",
+        " cookie=0x0, duration=0.065s, table=0, n_packets=0, n_bytes=0, priority=400,ip,nw_src=172.31.210.11,nw_dst=172.31.210.12 actions=output:58",
+        " cookie=0x0, duration=0.056s, table=0, n_packets=0, n_bytes=0, priority=400,ip,nw_src=172.31.210.12,nw_dst=172.31.210.11 actions=output:57",
+        " cookie=0x0, duration=0.047s, table=0, n_packets=0, n_bytes=0, priority=400,ip,nw_src=172.31.210.12,nw_dst=172.31.210.13 actions=output:59",
+        " cookie=0x0, duration=0.038s, table=0, n_packets=0, n_bytes=0, priority=400,ip,nw_src=172.31.210.13,nw_dst=172.31.210.12 actions=output:58",
+        " cookie=0x0, duration=0.029s, table=0, n_packets=0, n_bytes=0, priority=400,ip,nw_src=172.31.210.14,nw_dst=172.31.210.12 actions=output:58",
+        " cookie=0x0, duration=0.020s, table=0, n_packets=0, n_bytes=0, priority=400,ip,nw_src=172.31.210.12,nw_dst=172.31.210.14 actions=output:60",
+        " cookie=0x0, duration=0.011s, table=0, n_packets=0, n_bytes=0, priority=500,ip,nw_src=172.31.210.11,nw_dst=172.31.210.13 actions=drop",
+        " cookie=0x0, duration=0.002s, table=0, n_packets=0, n_bytes=0, priority=0 actions=drop"
+    ]
+}
+
+PLAY [Configure edge-b for two-path TE baseline] *******************************
+
+TASK [Ensure OVS bridge baseline] **********************************************
+changed: [lab-sdn-edge-ovs-b-01]
+
+TASK [Remove old TE ports on edge-b] *******************************************
+changed: [lab-sdn-edge-ovs-b-01]
+
+TASK [Create workload and path VXLAN ports on edge-b] **************************
+changed: [lab-sdn-edge-ovs-b-01]
+
+TASK [Install edge-b traffic engineering flows] ********************************
+changed: [lab-sdn-edge-ovs-b-01]
+
+TASK [Show edge-b flows] *******************************************************
+ok: [lab-sdn-edge-ovs-b-01] => {
+    "edge_b_flows.stdout_lines": [
+        "EDGE_B_PORTS db=53 bulk=54 path1=55 path2=56",
+        "OFPST_FLOW reply (OF1.3) (xid=0x2):",
+        " cookie=0x0, duration=0.049s, table=0, n_packets=0, n_bytes=0, priority=400,ip,nw_src=172.31.210.12,nw_dst=172.31.210.13 actions=output:53",
+        " cookie=0x0, duration=0.039s, table=0, n_packets=0, n_bytes=0, priority=400,ip,nw_src=172.31.210.13,nw_dst=172.31.210.12 actions=output:55",
+        " cookie=0x0, duration=0.030s, table=0, n_packets=0, n_bytes=0, priority=400,ip,nw_src=172.31.210.14,nw_dst=172.31.210.12 actions=output:56",
+        " cookie=0x0, duration=0.021s, table=0, n_packets=0, n_bytes=0, priority=400,ip,nw_src=172.31.210.12,nw_dst=172.31.210.14 actions=output:54",
+        " cookie=0x0, duration=0.012s, table=0, n_packets=0, n_bytes=0, priority=500,ip,nw_src=172.31.210.14,nw_dst=172.31.210.13 actions=drop",
+        " cookie=0x0, duration=0.003s, table=0, n_packets=1, n_bytes=90, priority=0 actions=drop"
+    ]
+}
+
+PLAY [Generate traffic for TE counter baseline] ********************************
+
+TASK [Generate WEB -> API local traffic] ***************************************
+changed: [localhost]
+
+TASK [Generate API -> DB critical path-1 traffic] ******************************
+changed: [localhost]
+
+TASK [Generate BULK -> API bulk/default path-2 traffic] ************************
+changed: [localhost]
+
+TASK [Generate denied WEB -> DB attempts] **************************************
+changed: [localhost]
+
+TASK [Generate denied BULK -> DB attempts] *************************************
+changed: [localhost]
+
+PLAY [Verify TE flow counters on edge-a] ***************************************
+
+TASK [Dump edge-a OVS flows] ***************************************************
+ok: [lab-sdn-edge-ovs-a-01]
+
+TASK [Show edge-a flow counters] ***********************************************
+ok: [lab-sdn-edge-ovs-a-01] => {
+    "edge_a_flows.stdout_lines": [
+        "OFPST_FLOW reply (OF1.3) (xid=0x2):",
+        " cookie=0x0, duration=23.006s, table=0, n_packets=140, n_bytes=11180, priority=400,ip,nw_src=172.31.210.11,nw_dst=172.31.210.12 actions=output:58",
+        " cookie=0x0, duration=22.997s, table=0, n_packets=100, n_bytes=11960, priority=400,ip,nw_src=172.31.210.12,nw_dst=172.31.210.11 actions=output:57",
+        " cookie=0x0, duration=22.988s, table=0, n_packets=210, n_bytes=16770, priority=400,ip,nw_src=172.31.210.12,nw_dst=172.31.210.13 actions=output:59",
+        " cookie=0x0, duration=22.979s, table=0, n_packets=150, n_bytes=16740, priority=400,ip,nw_src=172.31.210.13,nw_dst=172.31.210.12 actions=output:58",
+        " cookie=0x0, duration=22.970s, table=0, n_packets=210, n_bytes=16770, priority=400,ip,nw_src=172.31.210.14,nw_dst=172.31.210.12 actions=output:58",
+        " cookie=0x0, duration=22.961s, table=0, n_packets=150, n_bytes=17940, priority=400,ip,nw_src=172.31.210.12,nw_dst=172.31.210.14 actions=output:60",
+        " cookie=0x0, duration=22.952s, table=0, n_packets=10, n_bytes=740, priority=500,ip,nw_src=172.31.210.11,nw_dst=172.31.210.13 actions=drop",
+        " cookie=0x0, duration=22.943s, table=0, n_packets=23, n_bytes=1966, priority=0 actions=drop"
+    ]
+}
+
+TASK [Validate edge-a TE counters] *********************************************
+changed: [lab-sdn-edge-ovs-a-01]
+
+TASK [Show edge-a counter validation] ******************************************
+ok: [lab-sdn-edge-ovs-a-01] => {
+    "edge_a_counter_check.stdout_lines": [
+        "web_to_api_local packets=140",
+        "api_to_db_path1 packets=210",
+        "bulk_to_api_from_path2 packets=210",
+        "web_to_db_denied packets=10",
+        "EDGE_A_TE_COUNTERS_PASS"
+    ]
+}
+
+PLAY [Verify TE flow counters on edge-b] ***************************************
+
+TASK [Dump edge-b OVS flows] ***************************************************
+ok: [lab-sdn-edge-ovs-b-01]
+
+TASK [Show edge-b flow counters] ***********************************************
+ok: [lab-sdn-edge-ovs-b-01] => {
+    "edge_b_flows.stdout_lines": [
+        "OFPST_FLOW reply (OF1.3) (xid=0x2):",
+        " cookie=0x0, duration=22.598s, table=0, n_packets=210, n_bytes=16770, priority=400,ip,nw_src=172.31.210.12,nw_dst=172.31.210.13 actions=output:53",
+        " cookie=0x0, duration=22.588s, table=0, n_packets=150, n_bytes=16740, priority=400,ip,nw_src=172.31.210.13,nw_dst=172.31.210.12 actions=output:55",
+        " cookie=0x0, duration=22.579s, table=0, n_packets=210, n_bytes=16770, priority=400,ip,nw_src=172.31.210.14,nw_dst=172.31.210.12 actions=output:56",
+        " cookie=0x0, duration=22.570s, table=0, n_packets=150, n_bytes=17940, priority=400,ip,nw_src=172.31.210.12,nw_dst=172.31.210.14 actions=output:54",
+        " cookie=0x0, duration=22.561s, table=0, n_packets=10, n_bytes=740, priority=500,ip,nw_src=172.31.210.14,nw_dst=172.31.210.13 actions=drop",
+        " cookie=0x0, duration=22.552s, table=0, n_packets=18, n_bytes=1611, priority=0 actions=drop"
+    ]
+}
+
+TASK [Validate edge-b TE counters] *********************************************
+changed: [lab-sdn-edge-ovs-b-01]
+
+TASK [Show edge-b counter validation] ******************************************
+ok: [lab-sdn-edge-ovs-b-01] => {
+    "edge_b_counter_check.stdout_lines": [
+        "api_to_db_from_path1 packets=210",
+        "db_to_api_return_path1 packets=150",
+        "bulk_to_api_path2 packets=210",
+        "bulk_to_db_denied packets=10",
+        "EDGE_B_TE_COUNTERS_PASS"
+    ]
+}
+
+PLAY [Final TE counter assertion] **********************************************
+
+TASK [Mark TE counter baseline passed] *****************************************
+ok: [localhost] => {
+    "msg": "TE_PATH_COUNTER_BASELINE_PASS"
+}
+
+PLAY RECAP *********************************************************************
+lab-sdn-app-api-01         : ok=3    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+lab-sdn-app-bulk-01        : ok=3    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+lab-sdn-app-web-01         : ok=3    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+lab-sdn-data-db-01         : ok=3    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+lab-sdn-edge-ovs-a-01      : ok=9    changed=5    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+lab-sdn-edge-ovs-b-01      : ok=9    changed=5    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+localhost                  : ok=6    changed=5    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+

@@ -1,0 +1,125 @@
+
+PLAY [Verify workload services from ops node] **********************************
+
+TASK [Check web health] ********************************************************
+ok: [localhost]
+
+TASK [Check API health] ********************************************************
+ok: [localhost]
+
+TASK [Check DB health] *********************************************************
+ok: [localhost]
+
+TASK [Check API to DB path] ****************************************************
+ok: [localhost]
+
+TASK [Parse service responses] *************************************************
+ok: [localhost]
+
+TASK [Show service health summary] *********************************************
+ok: [localhost] => {
+    "msg": {
+        "api": {
+            "db_url": "http://10.60.10.33:15432",
+            "role": "application-api",
+            "service": "api",
+            "status": "ok",
+            "timestamp": "2026-05-11T22:11:29.237604Z"
+        },
+        "api_db_check": {
+            "db_reachable": true,
+            "db_response": {
+                "role": "database",
+                "service": "mock-db",
+                "status": "ok",
+                "timestamp": "2026-05-11T22:11:29.544887Z"
+            },
+            "db_status_code": 200,
+            "service": "api"
+        },
+        "db": {
+            "role": "database",
+            "service": "mock-db",
+            "status": "ok",
+            "timestamp": "2026-05-11T22:11:29.394491Z"
+        },
+        "web": {
+            "role": "frontend",
+            "service": "web",
+            "status": "ok"
+        }
+    }
+}
+
+TASK [Assert base services are healthy] ****************************************
+ok: [localhost] => {
+    "changed": false,
+    "msg": "WORKLOAD_SERVICES_BASELINE_PASS"
+}
+
+PLAY [Verify east-west paths from workload nodes] ******************************
+
+TASK [Run node-specific connectivity checks] ***********************************
+changed: [lab-sdn-app-api-01]
+changed: [lab-sdn-app-web-01]
+changed: [lab-sdn-app-bulk-01]
+
+TASK [Show node check output] **************************************************
+ok: [lab-sdn-app-web-01] => {
+    "node_check.stdout_lines": [
+        "hostname=lab-sdn-app-web-01",
+        "{\"service\":\"api\",\"status\":\"ok\",\"role\":\"application-api\",\"db_url\":\"http://10.60.10.33:15432\",\"timestamp\":\"2026-05-11T22:11:30.074073Z\"}{\"service\":\"api\",\"db_reachable\":true,\"db_status_code\":200,\"db_response\":{\"service\":\"mock-db\",\"status\":\"ok\",\"role\":\"database\",\"timestamp\":\"2026-05-11T22:11:30.085720Z\"}}"
+    ]
+}
+ok: [lab-sdn-app-api-01] => {
+    "node_check.stdout_lines": [
+        "hostname=lab-sdn-app-api-01",
+        "{\"service\":\"mock-db\",\"status\":\"ok\",\"role\":\"database\",\"timestamp\":\"2026-05-11T22:11:30.077356Z\"}{\"service\":\"mock-db\",\"result\":\"mock-query-ok\",\"rows\":[{\"id\":1,\"name\":\"web-api-db-flow\"},{\"id\":2,\"name\":\"sdn-microsegmentation-demo\"}]}"
+    ]
+}
+ok: [lab-sdn-app-bulk-01] => {
+    "node_check.stdout_lines": [
+        "hostname=lab-sdn-app-bulk-01",
+        "[bulk] web health",
+        "{",
+        "  \"service\": \"web\",",
+        "  \"status\": \"ok\",",
+        "  \"role\": \"frontend\"",
+        "}",
+        "[bulk] api health",
+        "{",
+        "  \"service\": \"api\",",
+        "  \"status\": \"ok\",",
+        "  \"role\": \"application-api\",",
+        "  \"db_url\": \"http://10.60.10.33:15432\",",
+        "  \"timestamp\": \"2026-05-11T22:11:30.093331Z\"",
+        "}",
+        "[bulk] api db-check",
+        "{",
+        "  \"service\": \"api\",",
+        "  \"db_reachable\": true,",
+        "  \"db_status_code\": 200,",
+        "  \"db_response\": {",
+        "    \"service\": \"mock-db\",",
+        "    \"status\": \"ok\",",
+        "    \"role\": \"database\",",
+        "    \"timestamp\": \"2026-05-11T22:11:30.111698Z\"",
+        "  }",
+        "}",
+        "[bulk] direct db health",
+        "{",
+        "  \"service\": \"mock-db\",",
+        "  \"status\": \"ok\",",
+        "  \"role\": \"database\",",
+        "  \"timestamp\": \"2026-05-11T22:11:30.123715Z\"",
+        "}",
+        "[bulk] done"
+    ]
+}
+
+PLAY RECAP *********************************************************************
+lab-sdn-app-api-01         : ok=2    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+lab-sdn-app-bulk-01        : ok=2    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+lab-sdn-app-web-01         : ok=2    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+localhost                  : ok=7    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+

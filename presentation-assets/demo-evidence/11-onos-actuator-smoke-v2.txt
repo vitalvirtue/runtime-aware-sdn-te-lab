@@ -1,0 +1,285 @@
+
+PLAY [Install ONOS-backed bidirectional critical flow over path-2] *************
+
+TASK [Activate ONOS forwarding helper app for ARP and packet handling] *********
+changed: [lab-sdn-ctrl-onos-01]
+
+TASK [Show ONOS app state] *****************************************************
+ok: [lab-sdn-ctrl-onos-01] => {
+    "onos_fwd_app.stdout_lines": [
+        "{",
+        "  \"name\": \"org.onosproject.drivers.stratum\",",
+        "  \"state\": \"ACTIVE\"",
+        "}",
+        "{",
+        "  \"name\": \"org.onosproject.drivers.oplink\",",
+        "  \"state\": \"INSTALLED\"",
+        "}",
+        "{",
+        "  \"name\": \"org.onosproject.drivers.gnoi\",",
+        "  \"state\": \"ACTIVE\"",
+        "}",
+        "{",
+        "  \"name\": \"org.onosproject.drivers.ciena.waveserverai\",",
+        "  \"state\": \"INSTALLED\"",
+        "}",
+        "{",
+        "  \"name\": \"org.onosproject.openflow-base\",",
+        "  \"state\": \"ACTIVE\"",
+        "}",
+        "{",
+        "  \"name\": \"org.onosproject.drivers.juniper\",",
+        "  \"state\": \"INSTALLED\"",
+        "}",
+        "{",
+        "  \"name\": \"org.onosproject.drivers\",",
+        "  \"state\": \"ACTIVE\"",
+        "}",
+        "{",
+        "  \"name\": \"org.onosproject.openflow-message\",",
+        "  \"state\": \"ACTIVE\"",
+        "}",
+        "{",
+        "  \"name\": \"org.onosproject.drivers.arista\",",
+        "  \"state\": \"INSTALLED\"",
+        "}",
+        "{",
+        "  \"name\": \"org.onosproject.drivers.polatis.openflow\",",
+        "  \"state\": \"INSTALLED\"",
+        "}",
+        "{",
+        "  \"name\": \"org.onosproject.drivers.cisco.rest\",",
+        "  \"state\": \"INSTALLED\"",
+        "}",
+        "{",
+        "  \"name\": \"org.onosproject.drivers.gnmi\",",
+        "  \"state\": \"ACTIVE\"",
+        "}",
+        "{",
+        "  \"name\": \"org.onosproject.drivers.hp\",",
+        "  \"state\": \"INSTALLED\"",
+        "}",
+        "{",
+        "  \"name\": \"org.onosproject.drivers.odtn-driver\",",
+        "  \"state\": \"INSTALLED\"",
+        "}",
+        "{",
+        "  \"name\": \"org.onosproject.drivers.lisp\",",
+        "  \"state\": \"INSTALLED\"",
+        "}",
+        "{",
+        "  \"name\": \"org.onosproject.drivers.stratum-odtn\",",
+        "  \"state\": \"INSTALLED\"",
+        "}",
+        "{",
+        "  \"name\": \"org.onosproject.drivers.server\",",
+        "  \"state\": \"INSTALLED\"",
+        "}",
+        "{",
+        "  \"name\": \"org.onosproject.drivers.p4runtime\",",
+        "  \"state\": \"ACTIVE\"",
+        "}",
+        "{",
+        "  \"name\": \"org.onosproject.drivers.ciena.c5170\",",
+        "  \"state\": \"INSTALLED\"",
+        "}",
+        "{",
+        "  \"name\": \"org.onosproject.drivers.netconf\",",
+        "  \"state\": \"INSTALLED\"",
+        "}",
+        "{",
+        "  \"name\": \"org.onosproject.drivers.cisco.netconf\",",
+        "  \"state\": \"INSTALLED\"",
+        "}",
+        "{",
+        "  \"name\": \"org.onosproject.drivers.optical\",",
+        "  \"state\": \"INSTALLED\"",
+        "}",
+        "{",
+        "  \"name\": \"org.onosproject.drivers.polatis.netconf\",",
+        "  \"state\": \"INSTALLED\"",
+        "}",
+        "{",
+        "  \"name\": \"org.onosproject.drivers.fujitsu\",",
+        "  \"state\": \"INSTALLED\"",
+        "}",
+        "{",
+        "  \"name\": \"org.onosproject.mfwd\",",
+        "  \"state\": \"INSTALLED\"",
+        "}",
+        "{",
+        "  \"name\": \"org.onosproject.drivers.ciena.c5162\",",
+        "  \"state\": \"INSTALLED\"",
+        "}",
+        "{",
+        "  \"name\": \"org.onosproject.drivers.czechlight\",",
+        "  \"state\": \"INSTALLED\"",
+        "}",
+        "{",
+        "  \"name\": \"org.onosproject.drivers.corsa\",",
+        "  \"state\": \"INSTALLED\"",
+        "}",
+        "{",
+        "  \"name\": \"org.onosproject.fwd\",",
+        "  \"state\": \"ACTIVE\"",
+        "}",
+        "{",
+        "  \"name\": \"org.onosproject.drivers.ovsdb\",",
+        "  \"state\": \"INSTALLED\"",
+        "}",
+        "{",
+        "  \"name\": \"org.onosproject.drivers.barefoot\",",
+        "  \"state\": \"INSTALLED\"",
+        "}",
+        "{",
+        "  \"name\": \"org.onosproject.drivers.ciena.waveserver\",",
+        "  \"state\": \"INSTALLED\"",
+        "}",
+        "{",
+        "  \"name\": \"org.onosproject.drivers.zte\",",
+        "  \"state\": \"INSTALLED\"",
+        "}",
+        "{",
+        "  \"name\": \"org.onosproject.drivers.flowspec\",",
+        "  \"state\": \"INSTALLED\"",
+        "}",
+        "{",
+        "  \"name\": \"org.onosproject.drivers.mellanox\",",
+        "  \"state\": \"INSTALLED\"",
+        "}",
+        "{",
+        "  \"name\": \"org.onosproject.drivers.lumentum\",",
+        "  \"state\": \"INSTALLED\"",
+        "}",
+        "{",
+        "  \"name\": \"org.onosproject.drivers.bmv2\",",
+        "  \"state\": \"ACTIVE\"",
+        "}",
+        "{",
+        "  \"name\": \"org.onosproject.openflow\",",
+        "  \"state\": \"ACTIVE\"",
+        "}"
+    ]
+}
+
+TASK [Install path-2 bidirectional ONOS flows] *********************************
+changed: [lab-sdn-ctrl-onos-01]
+
+TASK [Show ONOS path-2 bidirectional flow result] ******************************
+ok: [lab-sdn-ctrl-onos-01] => {
+    "onos_path2_bidir.stdout_lines": [
+        "== Cleanup old API<->DB ONOS flows ==",
+        "Deleting device=of:00000000000000a1 flow=49539596902760973",
+        "Deleting device=of:00000000000000a1 flow=49539599812196459",
+        "Deleting device=of:00000000000000b1 flow=49539597441642447",
+        "Deleting device=of:00000000000000b1 flow=49539597101689970",
+        "== Install path-2 flows ==",
+        "Installing edge_a_api_to_db_path2 device=of:00000000000000a1 src=172.31.210.12 dst=172.31.210.13 out=66",
+        "Installing edge_b_api_to_db_to_dbvx device=of:00000000000000b1 src=172.31.210.12 dst=172.31.210.13 out=57",
+        "Installing edge_b_db_to_api_path2 device=of:00000000000000b1 src=172.31.210.13 dst=172.31.210.12 out=62",
+        "Installing edge_a_db_to_api_to_apivx device=of:00000000000000a1 src=172.31.210.13 dst=172.31.210.12 out=62",
+        "== Wait for ADDED state ==",
+        "ONOS_FLOW_ADDED label=edge_a_api_to_db_path2 device=of:00000000000000a1 id=49539596902760973",
+        "ONOS_FLOW_ADDED label=edge_b_api_to_db_to_dbvx device=of:00000000000000b1 id=49539597101689970",
+        "ONOS_FLOW_ADDED label=edge_b_db_to_api_path2 device=of:00000000000000b1 id=49539597441642447",
+        "ONOS_FLOW_ADDED label=edge_a_db_to_api_to_apivx device=of:00000000000000a1 id=49539599812196459",
+        "ONOS_PATH2_BIDIRECTIONAL_FLOWS_ADDED"
+    ]
+}
+
+PLAY [Verify ONOS path-2 flows on OVS edge nodes] ******************************
+
+TASK [Dump ONOS-installed OVS flows] *******************************************
+ok: [lab-sdn-edge-ovs-b-01]
+ok: [lab-sdn-edge-ovs-a-01]
+
+TASK [Show OVS path-2 bidirectional flow result] *******************************
+ok: [lab-sdn-edge-ovs-a-01] => {
+    "ovs_path2_bidir.stdout_lines": [
+        "HOST=lab-sdn-edge-ovs-a-01",
+        "OFPST_FLOW reply (OF1.3) (xid=0x2):",
+        " cookie=0xb000003bb4820d, duration=4.726s, table=0, n_packets=0, n_bytes=0, send_flow_rem priority=65000,ip,nw_src=172.31.210.12,nw_dst=172.31.210.13 actions=output:66",
+        " cookie=0xb00000e91ef86b, duration=4.664s, table=0, n_packets=0, n_bytes=0, send_flow_rem priority=65000,ip,nw_src=172.31.210.13,nw_dst=172.31.210.12 actions=output:62",
+        " cookie=0x100004fd59552, duration=832.450s, table=0, n_packets=540, n_bytes=77220, send_flow_rem priority=40000,dl_type=0x8942 actions=CONTROLLER:65535,clear_actions",
+        " cookie=0x100000bc2c516, duration=832.450s, table=0, n_packets=540, n_bytes=77220, send_flow_rem priority=40000,dl_type=0x88cc actions=CONTROLLER:65535,clear_actions",
+        " cookie=0x100008ef6d737, duration=832.450s, table=0, n_packets=6, n_bytes=396, send_flow_rem priority=5,ip actions=CONTROLLER:65535,clear_actions",
+        " cookie=0x10000c00eeaf2, duration=832.450s, table=0, n_packets=0, n_bytes=0, send_flow_rem priority=40000,arp actions=CONTROLLER:65535,clear_actions",
+        " cookie=0xb000003bb4820d, duration=4.726s, table=0, n_packets=0, n_bytes=0, send_flow_rem priority=65000,ip,nw_src=172.31.210.12,nw_dst=172.31.210.13 actions=output:66",
+        " cookie=0xb00000e91ef86b, duration=4.664s, table=0, n_packets=0, n_bytes=0, send_flow_rem priority=65000,ip,nw_src=172.31.210.13,nw_dst=172.31.210.12 actions=output:62",
+        "OVS_ONOS_PATH2_BIDIRECTIONAL_FLOWS_PRESENT host=lab-sdn-edge-ovs-a-01"
+    ]
+}
+ok: [lab-sdn-edge-ovs-b-01] => {
+    "ovs_path2_bidir.stdout_lines": [
+        "HOST=lab-sdn-edge-ovs-b-01",
+        "OFPST_FLOW reply (OF1.3) (xid=0x2):",
+        " cookie=0xb00000478fec72, duration=4.696s, table=0, n_packets=0, n_bytes=0, send_flow_rem priority=65000,ip,nw_src=172.31.210.12,nw_dst=172.31.210.13 actions=output:57",
+        " cookie=0xb000005bd32fcf, duration=4.676s, table=0, n_packets=0, n_bytes=0, send_flow_rem priority=65000,ip,nw_src=172.31.210.13,nw_dst=172.31.210.12 actions=output:62",
+        " cookie=0x10000ab2aeaa8, duration=832.435s, table=0, n_packets=0, n_bytes=0, send_flow_rem priority=40000,arp actions=CONTROLLER:65535,clear_actions",
+        " cookie=0x10000cf230992, duration=832.435s, table=0, n_packets=539, n_bytes=77077, send_flow_rem priority=40000,dl_type=0x8942 actions=CONTROLLER:65535,clear_actions",
+        " cookie=0x10000b7d6d55d, duration=832.435s, table=0, n_packets=539, n_bytes=77077, send_flow_rem priority=40000,dl_type=0x88cc actions=CONTROLLER:65535,clear_actions",
+        " cookie=0x10000259db4b4, duration=832.435s, table=0, n_packets=4, n_bytes=264, send_flow_rem priority=5,ip actions=CONTROLLER:65535,clear_actions",
+        " cookie=0xb00000478fec72, duration=4.696s, table=0, n_packets=0, n_bytes=0, send_flow_rem priority=65000,ip,nw_src=172.31.210.12,nw_dst=172.31.210.13 actions=output:57",
+        " cookie=0xb000005bd32fcf, duration=4.676s, table=0, n_packets=0, n_bytes=0, send_flow_rem priority=65000,ip,nw_src=172.31.210.13,nw_dst=172.31.210.12 actions=output:62",
+        "OVS_ONOS_PATH2_BIDIRECTIONAL_FLOWS_PRESENT host=lab-sdn-edge-ovs-b-01"
+    ]
+}
+
+PLAY [Verify critical api to db traffic over ONOS path-2] **********************
+
+TASK [Curl DB health after ONOS bidirectional path-2 flows] ********************
+ok: [lab-sdn-app-api-01]
+
+TASK [Show API to DB path-2 health result] *************************************
+ok: [lab-sdn-app-api-01] => {
+    "api_db_health_path2.stdout_lines": [
+        "{\"service\":\"mock-db\",\"status\":\"ok\",\"role\":\"database\",\"timestamp\":\"2026-05-11T22:53:27.305954Z\"}API_TO_DB_HEALTH_OVER_ONOS_PATH2_PASS"
+    ]
+}
+
+PLAY [Restore critical api to db flow to path-1 through ONOS] ******************
+
+TASK [Restore path-1 bidirectional ONOS flows] *********************************
+changed: [lab-sdn-ctrl-onos-01]
+
+TASK [Show ONOS path-1 restore result] *****************************************
+ok: [lab-sdn-ctrl-onos-01] => {
+    "onos_path1_restore.stdout_lines": [
+        "== Cleanup old API<->DB ONOS flows ==",
+        "Deleting device=of:00000000000000a1 flow=49539596902760973",
+        "Deleting device=of:00000000000000a1 flow=49539599812196459",
+        "Deleting device=of:00000000000000b1 flow=49539597441642447",
+        "Deleting device=of:00000000000000b1 flow=49539597101689970",
+        "== Install path-1 restore flows ==",
+        "Installing edge_a_api_to_db_path1 device=of:00000000000000a1 src=172.31.210.12 dst=172.31.210.13 out=65",
+        "Installing edge_b_api_to_db_to_dbvx device=of:00000000000000b1 src=172.31.210.12 dst=172.31.210.13 out=57",
+        "Installing edge_b_db_to_api_path1 device=of:00000000000000b1 src=172.31.210.13 dst=172.31.210.12 out=61",
+        "Installing edge_a_db_to_api_to_apivx device=of:00000000000000a1 src=172.31.210.13 dst=172.31.210.12 out=62",
+        "ONOS_RESTORE_FLOW_ADDED label=edge_a_api_to_db_path1 device=of:00000000000000a1 id=49539596902760973",
+        "ONOS_RESTORE_FLOW_ADDED label=edge_b_api_to_db_to_dbvx device=of:00000000000000b1 id=49539597101689970",
+        "ONOS_RESTORE_FLOW_ADDED label=edge_b_db_to_api_path1 device=of:00000000000000b1 id=49539597441642447",
+        "ONOS_RESTORE_FLOW_ADDED label=edge_a_db_to_api_to_apivx device=of:00000000000000a1 id=49539599812196459",
+        "ONOS_PATH1_RESTORE_BIDIRECTIONAL_FLOWS_ADDED"
+    ]
+}
+
+PLAY [Verify restored path-1 flow and mark pass] *******************************
+
+TASK [Verify restored path-1 OpenFlow rules on edge nodes] *********************
+ok: [lab-sdn-edge-ovs-a-01]
+ok: [lab-sdn-edge-ovs-b-01]
+
+TASK [Mark 17B v2 passed] ******************************************************
+ok: [lab-sdn-edge-ovs-a-01] => {
+    "msg": "ONOS_ACTUATOR_BIDIRECTIONAL_SMOKE_PASS"
+}
+ok: [lab-sdn-edge-ovs-b-01] => {
+    "msg": "ONOS_ACTUATOR_BIDIRECTIONAL_SMOKE_PASS"
+}
+
+PLAY RECAP *********************************************************************
+lab-sdn-app-api-01         : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+lab-sdn-ctrl-onos-01       : ok=6    changed=3    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+lab-sdn-edge-ovs-a-01      : ok=4    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+lab-sdn-edge-ovs-b-01      : ok=4    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+

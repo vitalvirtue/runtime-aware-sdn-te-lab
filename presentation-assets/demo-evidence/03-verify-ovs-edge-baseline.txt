@@ -1,0 +1,311 @@
+
+PLAY [Verify OVS edge baseline] ************************************************
+
+TASK [Check Open vSwitch service] **********************************************
+ok: [lab-sdn-edge-ovs-b-01]
+ok: [lab-sdn-edge-ovs-a-01]
+
+TASK [Check OVS bridge exists] *************************************************
+ok: [lab-sdn-edge-ovs-a-01]
+ok: [lab-sdn-edge-ovs-b-01]
+
+TASK [Read OVS bridge protocols] ***********************************************
+ok: [lab-sdn-edge-ovs-a-01]
+ok: [lab-sdn-edge-ovs-b-01]
+
+TASK [Read OVS bridge fail mode] ***********************************************
+ok: [lab-sdn-edge-ovs-a-01]
+ok: [lab-sdn-edge-ovs-b-01]
+
+TASK [Show OVS bridge configuration] *******************************************
+ok: [lab-sdn-edge-ovs-a-01]
+ok: [lab-sdn-edge-ovs-b-01]
+
+TASK [Print OVS bridge configuration] ******************************************
+ok: [lab-sdn-edge-ovs-a-01] => {
+    "ovs_config.stdout_lines": [
+        "service=active",
+        "protocols=[OpenFlow13]",
+        "fail_mode=standalone",
+        "f54d5142-0238-4525-a983-7b63e746e84e",
+        "    Bridge br-edge0",
+        "        Controller \"tcp:10.60.10.11:6653\"",
+        "            is_connected: true",
+        "        fail_mode: standalone",
+        "        Port vxlan-web",
+        "            Interface vxlan-web",
+        "                type: vxlan",
+        "                options: {dst_port=\"4789\", key=\"100\", remote_ip=\"10.60.20.31\"}",
+        "        Port path2-to-b",
+        "            Interface path2-to-b",
+        "        Port vx-api-te",
+        "            Interface vx-api-te",
+        "                type: vxlan",
+        "                options: {dst_port=\"4789\", key=\"312\", remote_ip=\"10.60.20.32\"}",
+        "        Port path1-to-b",
+        "            Interface path1-to-b",
+        "        Port vxlan-api",
+        "            Interface vxlan-api",
+        "                type: vxlan",
+        "                options: {dst_port=\"4789\", key=\"100\", remote_ip=\"10.60.20.32\"}",
+        "        Port vx-web-te",
+        "            Interface vx-web-te",
+        "                type: vxlan",
+        "                options: {dst_port=\"4789\", key=\"311\", remote_ip=\"10.60.20.31\"}",
+        "        Port br-edge0",
+        "            Interface br-edge0",
+        "                type: internal",
+        "        Port vxlan-bulk",
+        "            Interface vxlan-bulk",
+        "                type: vxlan",
+        "                options: {dst_port=\"4789\", key=\"100\", remote_ip=\"10.60.20.34\"}",
+        "        Port vxlan-db",
+        "            Interface vxlan-db",
+        "                type: vxlan",
+        "                options: {dst_port=\"4789\", key=\"100\", remote_ip=\"10.60.20.33\"}",
+        "    ovs_version: \"3.1.0\""
+    ]
+}
+ok: [lab-sdn-edge-ovs-b-01] => {
+    "ovs_config.stdout_lines": [
+        "service=active",
+        "protocols=[OpenFlow13]",
+        "fail_mode=standalone",
+        "7d6cc428-96f1-4ec9-895d-642eb337a0b5",
+        "    Bridge br-edge0",
+        "        Controller \"tcp:10.60.10.11:6653\"",
+        "            is_connected: true",
+        "        fail_mode: standalone",
+        "        Port path2-to-a",
+        "            Interface path2-to-a",
+        "        Port br-edge0",
+        "            Interface br-edge0",
+        "                type: internal",
+        "        Port vx-bulk-te",
+        "            Interface vx-bulk-te",
+        "                type: vxlan",
+        "                options: {dst_port=\"4789\", key=\"314\", remote_ip=\"10.60.20.34\"}",
+        "        Port vx-db-te",
+        "            Interface vx-db-te",
+        "                type: vxlan",
+        "                options: {dst_port=\"4789\", key=\"313\", remote_ip=\"10.60.20.33\"}",
+        "        Port path1-to-a",
+        "            Interface path1-to-a",
+        "    ovs_version: \"3.1.0\""
+    ]
+}
+
+TASK [Assert OVS baseline config] **********************************************
+ok: [lab-sdn-edge-ovs-a-01] => {
+    "changed": false,
+    "msg": "OVS_EDGE_BASELINE_CONFIG_PASS"
+}
+ok: [lab-sdn-edge-ovs-b-01] => {
+    "changed": false,
+    "msg": "OVS_EDGE_BASELINE_CONFIG_PASS"
+}
+
+TASK [Run local OVS namespace smoke test] **************************************
+changed: [lab-sdn-edge-ovs-b-01]
+changed: [lab-sdn-edge-ovs-a-01]
+
+TASK [Print OVS smoke output] **************************************************
+ok: [lab-sdn-edge-ovs-a-01] => {
+    "ovs_smoke.stdout_lines": [
+        "[ovs-smoke] bridge status",
+        "f54d5142-0238-4525-a983-7b63e746e84e",
+        "    Bridge br-edge0",
+        "        Controller \"tcp:10.60.10.11:6653\"",
+        "            is_connected: true",
+        "        fail_mode: standalone",
+        "        Port vxlan-web",
+        "            Interface vxlan-web",
+        "                type: vxlan",
+        "                options: {dst_port=\"4789\", key=\"100\", remote_ip=\"10.60.20.31\"}",
+        "        Port path2-to-b",
+        "            Interface path2-to-b",
+        "        Port vx-api-te",
+        "            Interface vx-api-te",
+        "                type: vxlan",
+        "                options: {dst_port=\"4789\", key=\"312\", remote_ip=\"10.60.20.32\"}",
+        "        Port ovs-smoke-b",
+        "            Interface ovs-smoke-b",
+        "        Port path1-to-b",
+        "            Interface path1-to-b",
+        "        Port vxlan-api",
+        "            Interface vxlan-api",
+        "                type: vxlan",
+        "                options: {dst_port=\"4789\", key=\"100\", remote_ip=\"10.60.20.32\"}",
+        "        Port vx-web-te",
+        "            Interface vx-web-te",
+        "                type: vxlan",
+        "                options: {dst_port=\"4789\", key=\"311\", remote_ip=\"10.60.20.31\"}",
+        "        Port ovs-smoke-a",
+        "            Interface ovs-smoke-a",
+        "        Port br-edge0",
+        "            Interface br-edge0",
+        "                type: internal",
+        "        Port vxlan-bulk",
+        "            Interface vxlan-bulk",
+        "                type: vxlan",
+        "                options: {dst_port=\"4789\", key=\"100\", remote_ip=\"10.60.20.34\"}",
+        "        Port vxlan-db",
+        "            Interface vxlan-db",
+        "                type: vxlan",
+        "                options: {dst_port=\"4789\", key=\"100\", remote_ip=\"10.60.20.33\"}",
+        "    ovs_version: \"3.1.0\"",
+        "[ovs-smoke] ports",
+        "OFPT_FEATURES_REPLY (OF1.3) (xid=0x2): dpid:00000000000000a1",
+        "n_tables:254, n_buffers:0",
+        "capabilities: FLOW_STATS TABLE_STATS PORT_STATS GROUP_STATS QUEUE_STATS",
+        "OFPST_PORT_DESC reply (OF1.3) (xid=0x3):",
+        " 7(vxlan-web): addr:ee:43:38:19:ed:c2",
+        "     config:     0",
+        "     state:      LIVE",
+        "     speed: 0 Mbps now, 0 Mbps max",
+        " 8(vxlan-api): addr:fe:80:6b:9e:44:cf",
+        "     config:     0",
+        "     state:      LIVE",
+        "     speed: 0 Mbps now, 0 Mbps max",
+        " 9(vxlan-db): addr:d6:a3:12:6a:e0:a0",
+        "     config:     0",
+        "     state:      LIVE",
+        "     speed: 0 Mbps now, 0 Mbps max",
+        " 10(vxlan-bulk): addr:86:1a:8c:17:aa:cd",
+        "     config:     0",
+        "     state:      LIVE",
+        "     speed: 0 Mbps now, 0 Mbps max",
+        " 27(vx-web-te): addr:ce:29:bc:7b:2d:67",
+        "     config:     0",
+        "     state:      LIVE",
+        "     speed: 0 Mbps now, 0 Mbps max",
+        " 28(vx-api-te): addr:1a:6b:ed:c7:dc:f5",
+        "     config:     0",
+        "     state:      LIVE",
+        "     speed: 0 Mbps now, 0 Mbps max",
+        " 31(path1-to-b): addr:7e:58:c2:80:a7:cf",
+        "     config:     0",
+        "     state:      LIVE",
+        "     speed: 0 Mbps now, 0 Mbps max",
+        " 32(path2-to-b): addr:5a:ea:dc:fb:30:d7",
+        "     config:     0",
+        "     state:      LIVE",
+        "     speed: 0 Mbps now, 0 Mbps max",
+        " 43(ovs-smoke-a): addr:fa:ef:8b:bd:94:c2",
+        "     config:     0",
+        "     state:      LIVE",
+        "     current:    10GB-FD COPPER",
+        "     speed: 10000 Mbps now, 0 Mbps max",
+        " 44(ovs-smoke-b): addr:e6:1a:c7:f0:d0:ed",
+        "     config:     0",
+        "     state:      LIVE",
+        "     current:    10GB-FD COPPER",
+        "     speed: 10000 Mbps now, 0 Mbps max",
+        " LOCAL(br-edge0): addr:e2:3f:13:fd:5c:4c",
+        "     config:     PORT_DOWN",
+        "     state:      LINK_DOWN",
+        "     speed: 0 Mbps now, 0 Mbps max",
+        "OFPT_GET_CONFIG_REPLY (OF1.3) (xid=0x5): frags=normal miss_send_len=0",
+        "[ovs-smoke] ping ns1 -> ns2",
+        "PING 172.31.90.2 (172.31.90.2) 56(84) bytes of data.",
+        "64 bytes from 172.31.90.2: icmp_seq=1 ttl=64 time=7.91 ms",
+        "",
+        "--- 172.31.90.2 ping statistics ---",
+        "3 packets transmitted, 1 received, 66.6667% packet loss, time 2023ms",
+        "rtt min/avg/max/mdev = 7.906/7.906/7.906/0.000 ms",
+        "OVS_EDGE_LOCAL_SMOKE_PASS"
+    ]
+}
+ok: [lab-sdn-edge-ovs-b-01] => {
+    "ovs_smoke.stdout_lines": [
+        "[ovs-smoke] bridge status",
+        "7d6cc428-96f1-4ec9-895d-642eb337a0b5",
+        "    Bridge br-edge0",
+        "        Controller \"tcp:10.60.10.11:6653\"",
+        "            is_connected: true",
+        "        fail_mode: standalone",
+        "        Port path2-to-a",
+        "            Interface path2-to-a",
+        "        Port ovs-smoke-b",
+        "            Interface ovs-smoke-b",
+        "        Port br-edge0",
+        "            Interface br-edge0",
+        "                type: internal",
+        "        Port vx-bulk-te",
+        "            Interface vx-bulk-te",
+        "                type: vxlan",
+        "                options: {dst_port=\"4789\", key=\"314\", remote_ip=\"10.60.20.34\"}",
+        "        Port ovs-smoke-a",
+        "            Interface ovs-smoke-a",
+        "        Port vx-db-te",
+        "            Interface vx-db-te",
+        "                type: vxlan",
+        "                options: {dst_port=\"4789\", key=\"313\", remote_ip=\"10.60.20.33\"}",
+        "        Port path1-to-a",
+        "            Interface path1-to-a",
+        "    ovs_version: \"3.1.0\"",
+        "[ovs-smoke] ports",
+        "OFPT_FEATURES_REPLY (OF1.3) (xid=0x2): dpid:00000000000000b1",
+        "n_tables:254, n_buffers:0",
+        "capabilities: FLOW_STATS TABLE_STATS PORT_STATS GROUP_STATS QUEUE_STATS",
+        "OFPST_PORT_DESC reply (OF1.3) (xid=0x3):",
+        " 23(vx-db-te): addr:ee:45:6f:24:67:93",
+        "     config:     0",
+        "     state:      LIVE",
+        "     speed: 0 Mbps now, 0 Mbps max",
+        " 24(vx-bulk-te): addr:ee:ae:a2:f6:33:95",
+        "     config:     0",
+        "     state:      LIVE",
+        "     speed: 0 Mbps now, 0 Mbps max",
+        " 27(path1-to-a): addr:22:44:57:96:ec:8f",
+        "     config:     0",
+        "     state:      LIVE",
+        "     speed: 0 Mbps now, 0 Mbps max",
+        " 28(path2-to-a): addr:46:d9:26:68:ca:45",
+        "     config:     0",
+        "     state:      LIVE",
+        "     speed: 0 Mbps now, 0 Mbps max",
+        " 39(ovs-smoke-a): addr:ee:72:85:9e:71:90",
+        "     config:     0",
+        "     state:      LIVE",
+        "     current:    10GB-FD COPPER",
+        "     speed: 10000 Mbps now, 0 Mbps max",
+        " 40(ovs-smoke-b): addr:b6:af:50:86:ec:a8",
+        "     config:     0",
+        "     state:      LIVE",
+        "     current:    10GB-FD COPPER",
+        "     speed: 10000 Mbps now, 0 Mbps max",
+        " LOCAL(br-edge0): addr:96:7e:6f:04:52:4d",
+        "     config:     PORT_DOWN",
+        "     state:      LINK_DOWN",
+        "     speed: 0 Mbps now, 0 Mbps max",
+        "OFPT_GET_CONFIG_REPLY (OF1.3) (xid=0x5): frags=normal miss_send_len=0",
+        "[ovs-smoke] ping ns1 -> ns2",
+        "PING 172.31.90.2 (172.31.90.2) 56(84) bytes of data.",
+        "64 bytes from 172.31.90.2: icmp_seq=1 ttl=64 time=6.01 ms",
+        "64 bytes from 172.31.90.2: icmp_seq=1 ttl=64 time=127 ms (DUP!)",
+        "64 bytes from 172.31.90.2: icmp_seq=1 ttl=64 time=127 ms (DUP!)",
+        "64 bytes from 172.31.90.2: icmp_seq=2 ttl=64 time=0.346 ms",
+        "64 bytes from 172.31.90.2: icmp_seq=3 ttl=64 time=0.038 ms",
+        "",
+        "--- 172.31.90.2 ping statistics ---",
+        "3 packets transmitted, 3 received, +2 duplicates, 0% packet loss, time 2004ms",
+        "rtt min/avg/max/mdev = 0.038/52.157/127.395/61.304 ms",
+        "OVS_EDGE_LOCAL_SMOKE_PASS"
+    ]
+}
+
+TASK [Assert local OVS smoke test passed] **************************************
+ok: [lab-sdn-edge-ovs-a-01] => {
+    "changed": false,
+    "msg": "OVS_EDGE_LOCAL_SMOKE_PASS"
+}
+ok: [lab-sdn-edge-ovs-b-01] => {
+    "changed": false,
+    "msg": "OVS_EDGE_LOCAL_SMOKE_PASS"
+}
+
+PLAY RECAP *********************************************************************
+lab-sdn-edge-ovs-a-01      : ok=10   changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+lab-sdn-edge-ovs-b-01      : ok=10   changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+

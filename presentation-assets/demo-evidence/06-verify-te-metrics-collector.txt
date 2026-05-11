@@ -1,0 +1,99 @@
+
+PLAY [Verify TE metrics collector] *********************************************
+
+TASK [Check collector health] **************************************************
+ok: [lab-sdn-ctrl-onos-01]
+
+TASK [Collect TE metrics] ******************************************************
+ok: [lab-sdn-ctrl-onos-01]
+
+TASK [Parse metrics] ***********************************************************
+ok: [lab-sdn-ctrl-onos-01]
+
+TASK [Show latency metrics] ****************************************************
+ok: [lab-sdn-ctrl-onos-01] => {
+    "msg": {
+        "bulk_to_api_avg_seconds": "0.48270859999999993",
+        "critical_api_to_db_avg_seconds": "0.0015369999999999997"
+    }
+}
+
+TASK [Assert latency metrics are valid] ****************************************
+ok: [lab-sdn-ctrl-onos-01] => {
+    "changed": false,
+    "msg": "TE_METRICS_LATENCY_PASS"
+}
+
+TASK [Get current metrics] *****************************************************
+ok: [lab-sdn-ctrl-onos-01]
+
+TASK [Parse current metrics] ***************************************************
+ok: [lab-sdn-ctrl-onos-01]
+
+TASK [Extract important flow counters] *****************************************
+ok: [lab-sdn-ctrl-onos-01]
+
+TASK [Show selected flow counters] *********************************************
+ok: [lab-sdn-ctrl-onos-01] => {
+    "msg": {
+        "edge_a_bulk": [
+            {
+                "action": "output:62",
+                "bytes": 14049,
+                "class": "bulk_to_api",
+                "dst": "172.31.210.12",
+                "packets": 176,
+                "raw": "cookie=0x0, duration=143.107s, table=0, n_packets=176, n_bytes=14049, priority=400,ip,nw_src=172.31.210.14,nw_dst=172.31.210.12 actions=output:62",
+                "src": "172.31.210.14"
+            }
+        ],
+        "edge_a_critical": [
+            {
+                "action": "output:65",
+                "bytes": 14534,
+                "class": "critical_api_to_db",
+                "dst": "172.31.210.13",
+                "packets": 182,
+                "raw": "cookie=0x0, duration=143.126s, table=0, n_packets=182, n_bytes=14534, priority=400,ip,nw_src=172.31.210.12,nw_dst=172.31.210.13 actions=output:65",
+                "src": "172.31.210.12"
+            }
+        ],
+        "edge_b_bulk": [
+            {
+                "action": "output:62",
+                "bytes": 14534,
+                "class": "bulk_to_api",
+                "dst": "172.31.210.12",
+                "packets": 182,
+                "raw": "cookie=0x0, duration=143.345s, table=0, n_packets=182, n_bytes=14534, priority=400,ip,nw_src=172.31.210.14,nw_dst=172.31.210.12 actions=output:62",
+                "src": "172.31.210.14"
+            }
+        ],
+        "edge_b_critical": [
+            {
+                "action": "output:57",
+                "bytes": 14534,
+                "class": "critical_api_to_db",
+                "dst": "172.31.210.13",
+                "packets": 182,
+                "raw": "cookie=0x0, duration=143.363s, table=0, n_packets=182, n_bytes=14534, priority=400,ip,nw_src=172.31.210.12,nw_dst=172.31.210.13 actions=output:57",
+                "src": "172.31.210.12"
+            }
+        ]
+    }
+}
+
+TASK [Assert important flow counters exist] ************************************
+ok: [lab-sdn-ctrl-onos-01] => {
+    "changed": false,
+    "msg": "TE_METRICS_FLOW_CLASSIFICATION_PASS"
+}
+
+TASK [Mark collector baseline passed] ******************************************
+ok: [lab-sdn-ctrl-onos-01] => {
+    "msg": "TE_METRICS_COLLECTOR_BASELINE_PASS"
+}
+
+PLAY RECAP *********************************************************************
+lab-sdn-ctrl-onos-01       : ok=11   changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+

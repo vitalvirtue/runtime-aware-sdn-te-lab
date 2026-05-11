@@ -1,0 +1,54 @@
+
+PLAY [Verify path cost / delay emulation] **************************************
+
+TASK [Measure API -> DB critical path-1 latency] *******************************
+ok: [localhost]
+
+TASK [Measure BULK -> API path-2 latency] **************************************
+ok: [localhost]
+
+TASK [Show latency results] ****************************************************
+ok: [localhost] => {
+    "msg": {
+        "api_to_db_path1_avg_seconds": "0.001506",
+        "bulk_to_api_path2_avg_seconds": "0.482597"
+    }
+}
+
+TASK [Assert path-2 is more expensive than path-1] *****************************
+ok: [localhost] => {
+    "changed": false,
+    "msg": "TE_PATH_COST_EMULATION_PASS"
+}
+
+PLAY [Show qdisc state on edge nodes] ******************************************
+
+TASK [Show tc qdisc state] *****************************************************
+ok: [lab-sdn-edge-ovs-b-01]
+ok: [lab-sdn-edge-ovs-a-01]
+
+TASK [Print tc qdisc state] ****************************************************
+ok: [lab-sdn-edge-ovs-a-01] => {
+    "tc_state.stdout_lines": [
+        "host=lab-sdn-edge-ovs-a-01",
+        "dev=path1-to-b",
+        "qdisc noqueue 0: root refcnt 2 ",
+        "dev=path2-to-b",
+        "qdisc netem 8005: root refcnt 2 limit 1000 delay 120ms"
+    ]
+}
+ok: [lab-sdn-edge-ovs-b-01] => {
+    "tc_state.stdout_lines": [
+        "host=lab-sdn-edge-ovs-b-01",
+        "dev=path1-to-a",
+        "qdisc noqueue 0: root refcnt 2 ",
+        "dev=path2-to-a",
+        "qdisc netem 8005: root refcnt 2 limit 1000 delay 120ms"
+    ]
+}
+
+PLAY RECAP *********************************************************************
+lab-sdn-edge-ovs-a-01      : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+lab-sdn-edge-ovs-b-01      : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+localhost                  : ok=4    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+

@@ -1,0 +1,377 @@
+
+PLAY [Clear central eBPF event store] ******************************************
+
+TASK [Clear eBPF events] *******************************************************
+ok: [lab-sdn-ctrl-onos-01]
+
+PLAY [Generate and submit eBPF telemetry from workloads] ***********************
+
+TASK [Submit eBPF JSON telemetry to collector] *********************************
+changed: [lab-sdn-app-web-01]
+
+PLAY [Generate and submit eBPF telemetry from workloads] ***********************
+
+TASK [Submit eBPF JSON telemetry to collector] *********************************
+changed: [lab-sdn-app-api-01]
+
+PLAY [Generate and submit eBPF telemetry from workloads] ***********************
+
+TASK [Submit eBPF JSON telemetry to collector] *********************************
+changed: [lab-sdn-data-db-01]
+
+PLAY [Generate and submit eBPF telemetry from workloads] ***********************
+
+TASK [Submit eBPF JSON telemetry to collector] *********************************
+changed: [lab-sdn-app-bulk-01]
+
+PLAY [Verify eBPF and TE metrics correlation] **********************************
+
+TASK [Collect correlation] *****************************************************
+ok: [lab-sdn-ctrl-onos-01]
+
+TASK [Parse correlation] *******************************************************
+ok: [lab-sdn-ctrl-onos-01]
+
+TASK [Extract correlated flow classes] *****************************************
+ok: [lab-sdn-ctrl-onos-01]
+
+TASK [Show correlation summary] ************************************************
+ok: [lab-sdn-ctrl-onos-01] => {
+    "msg": {
+        "correlations": [
+            {
+                "expected_path": "path-2",
+                "flow_class": "bulk_to_api",
+                "host_event_count": 7,
+                "host_events": [
+                    {
+                        "agent_config_version": "1",
+                        "collector_received_at": "2026-05-11T22:37:43.234556Z",
+                        "comm": "curl",
+                        "dst_ip": "172.31.210.12",
+                        "dst_port": 18080,
+                        "event_type": "tcp_connect",
+                        "flow_class": "bulk_to_api",
+                        "host": "lab-sdn-app-bulk-01",
+                        "pid": 33434,
+                        "segment": "bulk",
+                        "source": "sdn-ebpf-go-agent:default-v1:bpftrace:kprobe:tcp_v4_connect",
+                        "timestamp": "2026-05-11T22:37:43.230790735Z"
+                    },
+                    {
+                        "collector_received_at": "2026-05-11T22:37:51.428496Z",
+                        "comm": "curl",
+                        "dst_ip": "172.31.210.12",
+                        "dst_port": 18080,
+                        "event_type": "tcp_connect",
+                        "flow_class": "bulk_to_api",
+                        "host": "lab-sdn-app-bulk-01",
+                        "pid": 33434,
+                        "segment": "bulk",
+                        "source": "bpftrace:kprobe:tcp_v4_connect",
+                        "timestamp": "2026-05-11T22:37:51.415504+00:00"
+                    },
+                    {
+                        "agent_config_version": "1",
+                        "collector_received_at": "2026-05-11T22:37:52.141863Z",
+                        "comm": "curl",
+                        "dst_ip": "172.31.210.12",
+                        "dst_port": 18080,
+                        "event_type": "tcp_connect",
+                        "flow_class": "bulk_to_api",
+                        "host": "lab-sdn-app-bulk-01",
+                        "pid": 33457,
+                        "segment": "bulk",
+                        "source": "sdn-ebpf-go-agent:default-v1:bpftrace:kprobe:tcp_v4_connect",
+                        "timestamp": "2026-05-11T22:37:52.138210604Z"
+                    },
+                    {
+                        "agent_config_version": "1",
+                        "collector_received_at": "2026-05-11T22:37:52.629503Z",
+                        "comm": "curl",
+                        "dst_ip": "172.31.210.12",
+                        "dst_port": 18080,
+                        "event_type": "tcp_connect",
+                        "flow_class": "bulk_to_api",
+                        "host": "lab-sdn-app-bulk-01",
+                        "pid": 33458,
+                        "segment": "bulk",
+                        "source": "sdn-ebpf-go-agent:default-v1:bpftrace:kprobe:tcp_v4_connect",
+                        "timestamp": "2026-05-11T22:37:52.626226434Z"
+                    },
+                    {
+                        "agent_config_version": "1",
+                        "collector_received_at": "2026-05-11T22:37:53.117343Z",
+                        "comm": "curl",
+                        "dst_ip": "172.31.210.12",
+                        "dst_port": 18080,
+                        "event_type": "tcp_connect",
+                        "flow_class": "bulk_to_api",
+                        "host": "lab-sdn-app-bulk-01",
+                        "pid": 33459,
+                        "segment": "bulk",
+                        "source": "sdn-ebpf-go-agent:default-v1:bpftrace:kprobe:tcp_v4_connect",
+                        "timestamp": "2026-05-11T22:37:53.114081593Z"
+                    },
+                    {
+                        "agent_config_version": "1",
+                        "collector_received_at": "2026-05-11T22:37:53.605212Z",
+                        "comm": "curl",
+                        "dst_ip": "172.31.210.12",
+                        "dst_port": 18080,
+                        "event_type": "tcp_connect",
+                        "flow_class": "bulk_to_api",
+                        "host": "lab-sdn-app-bulk-01",
+                        "pid": 33460,
+                        "segment": "bulk",
+                        "source": "sdn-ebpf-go-agent:default-v1:bpftrace:kprobe:tcp_v4_connect",
+                        "timestamp": "2026-05-11T22:37:53.601921167Z"
+                    },
+                    {
+                        "agent_config_version": "1",
+                        "collector_received_at": "2026-05-11T22:37:54.092507Z",
+                        "comm": "curl",
+                        "dst_ip": "172.31.210.12",
+                        "dst_port": 18080,
+                        "event_type": "tcp_connect",
+                        "flow_class": "bulk_to_api",
+                        "host": "lab-sdn-app-bulk-01",
+                        "pid": 33461,
+                        "segment": "bulk",
+                        "source": "sdn-ebpf-go-agent:default-v1:bpftrace:kprobe:tcp_v4_connect",
+                        "timestamp": "2026-05-11T22:37:54.089201344Z"
+                    }
+                ],
+                "network_metrics": {
+                    "edge_a_bytes": 26766,
+                    "edge_a_packets": 335,
+                    "edge_b_bytes": 26832,
+                    "edge_b_packets": 336,
+                    "latency_seconds": 0.48262839999999996
+                }
+            },
+            {
+                "expected_path": "path-1",
+                "flow_class": "critical_api_to_db",
+                "host_event_count": 7,
+                "host_events": [
+                    {
+                        "agent_config_version": "1",
+                        "collector_received_at": "2026-05-11T22:37:18.103649Z",
+                        "comm": "curl",
+                        "dst_ip": "172.31.210.13",
+                        "dst_port": 15432,
+                        "event_type": "tcp_connect",
+                        "flow_class": "critical_api_to_db",
+                        "host": "lab-sdn-app-api-01",
+                        "pid": 35114,
+                        "segment": "api",
+                        "source": "sdn-ebpf-go-agent:default-v1:bpftrace:kprobe:tcp_v4_connect",
+                        "timestamp": "2026-05-11T22:37:18.097761721Z"
+                    },
+                    {
+                        "collector_received_at": "2026-05-11T22:37:26.296763Z",
+                        "comm": "curl",
+                        "dst_ip": "172.31.210.13",
+                        "dst_port": 15432,
+                        "event_type": "tcp_connect",
+                        "flow_class": "critical_api_to_db",
+                        "host": "lab-sdn-app-api-01",
+                        "pid": 35114,
+                        "segment": "api",
+                        "source": "bpftrace:kprobe:tcp_v4_connect",
+                        "timestamp": "2026-05-11T22:37:26.281683+00:00"
+                    },
+                    {
+                        "agent_config_version": "1",
+                        "collector_received_at": "2026-05-11T22:37:51.886106Z",
+                        "comm": "curl",
+                        "dst_ip": "172.31.210.13",
+                        "dst_port": 15432,
+                        "event_type": "tcp_connect",
+                        "flow_class": "critical_api_to_db",
+                        "host": "lab-sdn-app-api-01",
+                        "pid": 35137,
+                        "segment": "api",
+                        "source": "sdn-ebpf-go-agent:default-v1:bpftrace:kprobe:tcp_v4_connect",
+                        "timestamp": "2026-05-11T22:37:51.880382352Z"
+                    },
+                    {
+                        "agent_config_version": "1",
+                        "collector_received_at": "2026-05-11T22:37:51.892608Z",
+                        "comm": "curl",
+                        "dst_ip": "172.31.210.13",
+                        "dst_port": 15432,
+                        "event_type": "tcp_connect",
+                        "flow_class": "critical_api_to_db",
+                        "host": "lab-sdn-app-api-01",
+                        "pid": 35138,
+                        "segment": "api",
+                        "source": "sdn-ebpf-go-agent:default-v1:bpftrace:kprobe:tcp_v4_connect",
+                        "timestamp": "2026-05-11T22:37:51.88734461Z"
+                    },
+                    {
+                        "agent_config_version": "1",
+                        "collector_received_at": "2026-05-11T22:37:51.898580Z",
+                        "comm": "curl",
+                        "dst_ip": "172.31.210.13",
+                        "dst_port": 15432,
+                        "event_type": "tcp_connect",
+                        "flow_class": "critical_api_to_db",
+                        "host": "lab-sdn-app-api-01",
+                        "pid": 35139,
+                        "segment": "api",
+                        "source": "sdn-ebpf-go-agent:default-v1:bpftrace:kprobe:tcp_v4_connect",
+                        "timestamp": "2026-05-11T22:37:51.893294156Z"
+                    },
+                    {
+                        "agent_config_version": "1",
+                        "collector_received_at": "2026-05-11T22:37:51.904564Z",
+                        "comm": "curl",
+                        "dst_ip": "172.31.210.13",
+                        "dst_port": 15432,
+                        "event_type": "tcp_connect",
+                        "flow_class": "critical_api_to_db",
+                        "host": "lab-sdn-app-api-01",
+                        "pid": 35140,
+                        "segment": "api",
+                        "source": "sdn-ebpf-go-agent:default-v1:bpftrace:kprobe:tcp_v4_connect",
+                        "timestamp": "2026-05-11T22:37:51.899325874Z"
+                    },
+                    {
+                        "agent_config_version": "1",
+                        "collector_received_at": "2026-05-11T22:37:51.910932Z",
+                        "comm": "curl",
+                        "dst_ip": "172.31.210.13",
+                        "dst_port": 15432,
+                        "event_type": "tcp_connect",
+                        "flow_class": "critical_api_to_db",
+                        "host": "lab-sdn-app-api-01",
+                        "pid": 35141,
+                        "segment": "api",
+                        "source": "sdn-ebpf-go-agent:default-v1:bpftrace:kprobe:tcp_v4_connect",
+                        "timestamp": "2026-05-11T22:37:51.905776065Z"
+                    }
+                ],
+                "network_metrics": {
+                    "edge_a_bytes": 28028,
+                    "edge_a_packets": 346,
+                    "edge_b_bytes": 28028,
+                    "edge_b_packets": 346,
+                    "latency_seconds": 0.0015700000000000002
+                }
+            },
+            {
+                "expected_path": "path-1-return",
+                "flow_class": "db_to_api",
+                "host_event_count": 2,
+                "host_events": [
+                    {
+                        "agent_config_version": "1",
+                        "collector_received_at": "2026-05-11T22:37:30.658152Z",
+                        "comm": "curl",
+                        "dst_ip": "172.31.210.12",
+                        "dst_port": 18080,
+                        "event_type": "tcp_connect",
+                        "flow_class": "db_to_api",
+                        "host": "lab-sdn-data-db-01",
+                        "pid": 40377,
+                        "segment": "db",
+                        "source": "sdn-ebpf-go-agent:default-v1:bpftrace:kprobe:tcp_v4_connect",
+                        "timestamp": "2026-05-11T22:37:30.656631297Z"
+                    },
+                    {
+                        "collector_received_at": "2026-05-11T22:37:38.852714Z",
+                        "comm": "curl",
+                        "dst_ip": "172.31.210.12",
+                        "dst_port": 18080,
+                        "event_type": "tcp_connect",
+                        "flow_class": "db_to_api",
+                        "host": "lab-sdn-data-db-01",
+                        "pid": 40377,
+                        "segment": "db",
+                        "source": "bpftrace:kprobe:tcp_v4_connect",
+                        "timestamp": "2026-05-11T22:37:38.842355+00:00"
+                    }
+                ],
+                "network_metrics": {
+                    "edge_a_bytes": 0,
+                    "edge_a_packets": 0,
+                    "edge_b_bytes": 0,
+                    "edge_b_packets": 0,
+                    "latency_seconds": null
+                }
+            },
+            {
+                "expected_path": "edge-a-local",
+                "flow_class": "web_to_api",
+                "host_event_count": 2,
+                "host_events": [
+                    {
+                        "agent_config_version": "1",
+                        "collector_received_at": "2026-05-11T22:37:05.540968Z",
+                        "comm": "curl",
+                        "dst_ip": "172.31.210.12",
+                        "dst_port": 18080,
+                        "event_type": "tcp_connect",
+                        "flow_class": "web_to_api",
+                        "host": "lab-sdn-app-web-01",
+                        "pid": 33197,
+                        "segment": "web",
+                        "source": "sdn-ebpf-go-agent:default-v1:bpftrace:kprobe:tcp_v4_connect",
+                        "timestamp": "2026-05-11T22:37:05.539943082Z"
+                    },
+                    {
+                        "collector_received_at": "2026-05-11T22:37:13.733549Z",
+                        "comm": "curl",
+                        "dst_ip": "172.31.210.12",
+                        "dst_port": 18080,
+                        "event_type": "tcp_connect",
+                        "flow_class": "web_to_api",
+                        "host": "lab-sdn-app-web-01",
+                        "pid": 33197,
+                        "segment": "web",
+                        "source": "bpftrace:kprobe:tcp_v4_connect",
+                        "timestamp": "2026-05-11T22:37:13.723863+00:00"
+                    }
+                ],
+                "network_metrics": {
+                    "edge_a_bytes": 1118,
+                    "edge_a_packets": 14,
+                    "edge_b_bytes": 0,
+                    "edge_b_packets": 0,
+                    "latency_seconds": null
+                }
+            }
+        ],
+        "ebpf_event_count": "18",
+        "flow_classes": [
+            "bulk_to_api",
+            "critical_api_to_db",
+            "db_to_api",
+            "web_to_api"
+        ]
+    }
+}
+
+TASK [Extract critical and bulk correlation] ***********************************
+ok: [lab-sdn-ctrl-onos-01]
+
+TASK [Assert correlation contains host and network telemetry] ******************
+ok: [lab-sdn-ctrl-onos-01] => {
+    "changed": false,
+    "msg": "EBPF_TE_CORRELATION_PASS"
+}
+
+TASK [Mark milestone 13E passed] ***********************************************
+ok: [lab-sdn-ctrl-onos-01] => {
+    "msg": "EBPF_TELEMETRY_TE_METRICS_CORRELATION_PASS"
+}
+
+PLAY RECAP *********************************************************************
+lab-sdn-app-api-01         : ok=1    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+lab-sdn-app-bulk-01        : ok=1    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+lab-sdn-app-web-01         : ok=1    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+lab-sdn-ctrl-onos-01       : ok=8    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+lab-sdn-data-db-01         : ok=1    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+

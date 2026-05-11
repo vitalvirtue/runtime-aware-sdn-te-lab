@@ -1,0 +1,288 @@
+
+PLAY [Clear central eBPF event store] ******************************************
+
+TASK [Clear eBPF events] *******************************************************
+ok: [lab-sdn-ctrl-onos-01]
+
+PLAY [Verify Go eBPF agent as default service] *********************************
+
+TASK [Ensure default agent service is active] **********************************
+ok: [lab-sdn-app-bulk-01]
+ok: [lab-sdn-data-db-01]
+ok: [lab-sdn-app-api-01]
+ok: [lab-sdn-app-web-01]
+
+TASK [Generate workload traffic for Go default agent] **************************
+changed: [lab-sdn-app-web-01]
+changed: [lab-sdn-data-db-01]
+changed: [lab-sdn-app-api-01]
+changed: [lab-sdn-app-bulk-01]
+
+TASK [Show Go default agent journal] *******************************************
+ok: [lab-sdn-app-web-01] => {
+    "go_default_journal.stdout_lines": [
+        "May 11 22:28:37 lab-sdn-app-web-01 sdn-ebpf-agent[24518]: TCP_CONNECT pid=32815 comm=curl daddr=172.31.210.12 dport=18080",
+        "May 11 22:28:37 lab-sdn-app-web-01 sdn-ebpf-agent[24518]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.12\",\"dst_port\":18080,\"flow_class\":\"web_to_api\",\"host\":\"lab-sdn-app-web-01\",\"sent\":true}",
+        "May 11 22:28:37 lab-sdn-app-web-01 sdn-ebpf-agent[24518]: TCP_CONNECT pid=32816 comm=curl daddr=172.31.210.12 dport=18080",
+        "May 11 22:28:37 lab-sdn-app-web-01 sdn-ebpf-agent[24518]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.12\",\"dst_port\":18080,\"flow_class\":\"web_to_api\",\"host\":\"lab-sdn-app-web-01\",\"sent\":true}",
+        "May 11 22:28:37 lab-sdn-app-web-01 sdn-ebpf-agent[24518]: TCP_CONNECT pid=32817 comm=curl daddr=172.31.210.12 dport=18080",
+        "May 11 22:28:37 lab-sdn-app-web-01 sdn-ebpf-agent[24518]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.12\",\"dst_port\":18080,\"flow_class\":\"web_to_api\",\"host\":\"lab-sdn-app-web-01\",\"sent\":true}",
+        "May 11 22:28:37 lab-sdn-app-web-01 sdn-ebpf-agent[24518]: TCP_CONNECT pid=32818 comm=curl daddr=172.31.210.12 dport=18080",
+        "May 11 22:28:37 lab-sdn-app-web-01 sdn-ebpf-agent[24518]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.12\",\"dst_port\":18080,\"flow_class\":\"web_to_api\",\"host\":\"lab-sdn-app-web-01\",\"sent\":true}",
+        "May 11 22:28:37 lab-sdn-app-web-01 sdn-ebpf-agent[24518]: TCP_CONNECT pid=32819 comm=curl daddr=172.31.210.12 dport=18080",
+        "May 11 22:28:37 lab-sdn-app-web-01 sdn-ebpf-agent[24518]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.12\",\"dst_port\":18080,\"flow_class\":\"web_to_api\",\"host\":\"lab-sdn-app-web-01\",\"sent\":true}",
+        "May 11 22:28:37 lab-sdn-app-web-01 sdn-ebpf-agent[24518]: TCP_CONNECT pid=32820 comm=curl daddr=172.31.210.12 dport=18080",
+        "May 11 22:28:37 lab-sdn-app-web-01 sdn-ebpf-agent[24518]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.12\",\"dst_port\":18080,\"flow_class\":\"web_to_api\",\"host\":\"lab-sdn-app-web-01\",\"sent\":true}",
+        "May 11 22:28:37 lab-sdn-app-web-01 sdn-ebpf-agent[24518]: TCP_CONNECT pid=32821 comm=curl daddr=172.31.210.12 dport=18080",
+        "May 11 22:28:37 lab-sdn-app-web-01 sdn-ebpf-agent[24518]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.12\",\"dst_port\":18080,\"flow_class\":\"web_to_api\",\"host\":\"lab-sdn-app-web-01\",\"sent\":true}",
+        "May 11 22:28:37 lab-sdn-app-web-01 sdn-ebpf-agent[24518]: TCP_CONNECT pid=32822 comm=curl daddr=172.31.210.12 dport=18080",
+        "May 11 22:28:37 lab-sdn-app-web-01 sdn-ebpf-agent[24518]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.12\",\"dst_port\":18080,\"flow_class\":\"web_to_api\",\"host\":\"lab-sdn-app-web-01\",\"sent\":true}",
+        "May 11 22:28:37 lab-sdn-app-web-01 sdn-ebpf-agent[24518]: TCP_CONNECT pid=32823 comm=curl daddr=172.31.210.12 dport=18080",
+        "May 11 22:28:37 lab-sdn-app-web-01 sdn-ebpf-agent[24518]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.12\",\"dst_port\":18080,\"flow_class\":\"web_to_api\",\"host\":\"lab-sdn-app-web-01\",\"sent\":true}",
+        "May 11 22:28:37 lab-sdn-app-web-01 sdn-ebpf-agent[24518]: TCP_CONNECT pid=32824 comm=curl daddr=172.31.210.12 dport=18080",
+        "May 11 22:28:37 lab-sdn-app-web-01 sdn-ebpf-agent[24518]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.12\",\"dst_port\":18080,\"flow_class\":\"web_to_api\",\"host\":\"lab-sdn-app-web-01\",\"sent\":true}",
+        "May 11 22:28:37 lab-sdn-app-web-01 sdn-ebpf-agent[24518]: TCP_CONNECT pid=32825 comm=curl daddr=172.31.210.12 dport=18080",
+        "May 11 22:28:37 lab-sdn-app-web-01 sdn-ebpf-agent[24518]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.12\",\"dst_port\":18080,\"flow_class\":\"web_to_api\",\"host\":\"lab-sdn-app-web-01\",\"sent\":true}",
+        "May 11 22:28:39 lab-sdn-app-web-01 sdn-ebpf-agent[24518]: TCP_CONNECT pid=32837 comm=curl daddr=172.31.210.13 dport=15432",
+        "May 11 22:28:39 lab-sdn-app-web-01 sdn-ebpf-agent[24518]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.13\",\"dst_port\":15432,\"flow_class\":\"denied_web_to_db\",\"host\":\"lab-sdn-app-web-01\",\"sent\":true}",
+        "May 11 22:28:41 lab-sdn-app-web-01 sdn-ebpf-agent[24518]: TCP_CONNECT pid=32839 comm=curl daddr=172.31.210.13 dport=15432",
+        "May 11 22:28:41 lab-sdn-app-web-01 sdn-ebpf-agent[24518]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.13\",\"dst_port\":15432,\"flow_class\":\"denied_web_to_db\",\"host\":\"lab-sdn-app-web-01\",\"sent\":true}",
+        "May 11 22:28:43 lab-sdn-app-web-01 sdn-ebpf-agent[24518]: TCP_CONNECT pid=32841 comm=curl daddr=172.31.210.13 dport=15432",
+        "May 11 22:28:43 lab-sdn-app-web-01 sdn-ebpf-agent[24518]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.13\",\"dst_port\":15432,\"flow_class\":\"denied_web_to_db\",\"host\":\"lab-sdn-app-web-01\",\"sent\":true}",
+        "May 11 22:28:45 lab-sdn-app-web-01 sdn-ebpf-agent[24518]: TCP_CONNECT pid=32843 comm=curl daddr=172.31.210.13 dport=15432",
+        "May 11 22:28:45 lab-sdn-app-web-01 sdn-ebpf-agent[24518]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.13\",\"dst_port\":15432,\"flow_class\":\"denied_web_to_db\",\"host\":\"lab-sdn-app-web-01\",\"sent\":true}",
+        "May 11 22:28:47 lab-sdn-app-web-01 sdn-ebpf-agent[24518]: TCP_CONNECT pid=32845 comm=curl daddr=172.31.210.13 dport=15432",
+        "May 11 22:28:47 lab-sdn-app-web-01 sdn-ebpf-agent[24518]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.13\",\"dst_port\":15432,\"flow_class\":\"denied_web_to_db\",\"host\":\"lab-sdn-app-web-01\",\"sent\":true}",
+        "May 11 22:35:49 lab-sdn-app-web-01 sdn-ebpf-agent[24518]: TCP_CONNECT pid=33138 comm=curl daddr=172.31.210.12 dport=18080",
+        "May 11 22:35:49 lab-sdn-app-web-01 sdn-ebpf-agent[24518]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.12\",\"dst_port\":18080,\"flow_class\":\"web_to_api\",\"host\":\"lab-sdn-app-web-01\",\"sent\":true}",
+        "May 11 22:35:57 lab-sdn-app-web-01 sdn-ebpf-agent[24518]: TCP_CONNECT pid=33145 comm=curl daddr=10.60.10.11 dport=8090",
+        "May 11 22:37:05 lab-sdn-app-web-01 sdn-ebpf-agent[24518]: TCP_CONNECT pid=33197 comm=curl daddr=172.31.210.12 dport=18080",
+        "May 11 22:37:05 lab-sdn-app-web-01 sdn-ebpf-agent[24518]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.12\",\"dst_port\":18080,\"flow_class\":\"web_to_api\",\"host\":\"lab-sdn-app-web-01\",\"sent\":true}",
+        "May 11 22:37:13 lab-sdn-app-web-01 sdn-ebpf-agent[24518]: TCP_CONNECT pid=33204 comm=curl daddr=10.60.10.11 dport=8090",
+        "May 11 22:38:31 lab-sdn-app-web-01 sdn-ebpf-agent[24518]: TCP_CONNECT pid=33284 comm=curl daddr=172.31.210.12 dport=18080",
+        "May 11 22:38:31 lab-sdn-app-web-01 sdn-ebpf-agent[24518]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.12\",\"dst_port\":18080,\"flow_class\":\"web_to_api\",\"host\":\"lab-sdn-app-web-01\",\"sent\":true}"
+    ]
+}
+ok: [lab-sdn-app-bulk-01] => {
+    "go_default_journal.stdout_lines": [
+        "May 11 22:34:38 lab-sdn-app-bulk-01 sdn-ebpf-agent[24614]: TCP_CONNECT pid=33267 comm=curl daddr=172.31.210.12 dport=18080",
+        "May 11 22:34:38 lab-sdn-app-bulk-01 sdn-ebpf-agent[24614]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.12\",\"dst_port\":18080,\"flow_class\":\"bulk_to_api\",\"host\":\"lab-sdn-app-bulk-01\",\"sent\":true}",
+        "May 11 22:35:02 lab-sdn-app-bulk-01 sdn-ebpf-agent[24614]: TCP_CONNECT pid=33295 comm=curl daddr=172.31.210.12 dport=18080",
+        "May 11 22:35:02 lab-sdn-app-bulk-01 sdn-ebpf-agent[24614]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.12\",\"dst_port\":18080,\"flow_class\":\"bulk_to_api\",\"host\":\"lab-sdn-app-bulk-01\",\"sent\":true}",
+        "May 11 22:35:02 lab-sdn-app-bulk-01 sdn-ebpf-agent[24614]: TCP_CONNECT pid=33296 comm=curl daddr=172.31.210.12 dport=18080",
+        "May 11 22:35:02 lab-sdn-app-bulk-01 sdn-ebpf-agent[24614]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.12\",\"dst_port\":18080,\"flow_class\":\"bulk_to_api\",\"host\":\"lab-sdn-app-bulk-01\",\"sent\":true}",
+        "May 11 22:35:03 lab-sdn-app-bulk-01 sdn-ebpf-agent[24614]: TCP_CONNECT pid=33297 comm=curl daddr=172.31.210.12 dport=18080",
+        "May 11 22:35:03 lab-sdn-app-bulk-01 sdn-ebpf-agent[24614]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.12\",\"dst_port\":18080,\"flow_class\":\"bulk_to_api\",\"host\":\"lab-sdn-app-bulk-01\",\"sent\":true}",
+        "May 11 22:35:03 lab-sdn-app-bulk-01 sdn-ebpf-agent[24614]: TCP_CONNECT pid=33298 comm=curl daddr=172.31.210.12 dport=18080",
+        "May 11 22:35:03 lab-sdn-app-bulk-01 sdn-ebpf-agent[24614]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.12\",\"dst_port\":18080,\"flow_class\":\"bulk_to_api\",\"host\":\"lab-sdn-app-bulk-01\",\"sent\":true}",
+        "May 11 22:35:04 lab-sdn-app-bulk-01 sdn-ebpf-agent[24614]: TCP_CONNECT pid=33299 comm=curl daddr=172.31.210.12 dport=18080",
+        "May 11 22:35:04 lab-sdn-app-bulk-01 sdn-ebpf-agent[24614]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.12\",\"dst_port\":18080,\"flow_class\":\"bulk_to_api\",\"host\":\"lab-sdn-app-bulk-01\",\"sent\":true}",
+        "May 11 22:36:27 lab-sdn-app-bulk-01 sdn-ebpf-agent[24614]: TCP_CONNECT pid=33361 comm=curl daddr=172.31.210.12 dport=18080",
+        "May 11 22:36:27 lab-sdn-app-bulk-01 sdn-ebpf-agent[24614]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.12\",\"dst_port\":18080,\"flow_class\":\"bulk_to_api\",\"host\":\"lab-sdn-app-bulk-01\",\"sent\":true}",
+        "May 11 22:36:35 lab-sdn-app-bulk-01 sdn-ebpf-agent[24614]: TCP_CONNECT pid=33368 comm=curl daddr=10.60.10.11 dport=8090",
+        "May 11 22:36:36 lab-sdn-app-bulk-01 sdn-ebpf-agent[24614]: TCP_CONNECT pid=33384 comm=curl daddr=172.31.210.12 dport=18080",
+        "May 11 22:36:36 lab-sdn-app-bulk-01 sdn-ebpf-agent[24614]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.12\",\"dst_port\":18080,\"flow_class\":\"bulk_to_api\",\"host\":\"lab-sdn-app-bulk-01\",\"sent\":true}",
+        "May 11 22:36:36 lab-sdn-app-bulk-01 sdn-ebpf-agent[24614]: TCP_CONNECT pid=33385 comm=curl daddr=172.31.210.12 dport=18080",
+        "May 11 22:36:36 lab-sdn-app-bulk-01 sdn-ebpf-agent[24614]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.12\",\"dst_port\":18080,\"flow_class\":\"bulk_to_api\",\"host\":\"lab-sdn-app-bulk-01\",\"sent\":true}",
+        "May 11 22:36:37 lab-sdn-app-bulk-01 sdn-ebpf-agent[24614]: TCP_CONNECT pid=33386 comm=curl daddr=172.31.210.12 dport=18080",
+        "May 11 22:36:37 lab-sdn-app-bulk-01 sdn-ebpf-agent[24614]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.12\",\"dst_port\":18080,\"flow_class\":\"bulk_to_api\",\"host\":\"lab-sdn-app-bulk-01\",\"sent\":true}",
+        "May 11 22:36:37 lab-sdn-app-bulk-01 sdn-ebpf-agent[24614]: TCP_CONNECT pid=33387 comm=curl daddr=172.31.210.12 dport=18080",
+        "May 11 22:36:37 lab-sdn-app-bulk-01 sdn-ebpf-agent[24614]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.12\",\"dst_port\":18080,\"flow_class\":\"bulk_to_api\",\"host\":\"lab-sdn-app-bulk-01\",\"sent\":true}",
+        "May 11 22:36:38 lab-sdn-app-bulk-01 sdn-ebpf-agent[24614]: TCP_CONNECT pid=33388 comm=curl daddr=172.31.210.12 dport=18080",
+        "May 11 22:36:38 lab-sdn-app-bulk-01 sdn-ebpf-agent[24614]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.12\",\"dst_port\":18080,\"flow_class\":\"bulk_to_api\",\"host\":\"lab-sdn-app-bulk-01\",\"sent\":true}",
+        "May 11 22:37:43 lab-sdn-app-bulk-01 sdn-ebpf-agent[24614]: TCP_CONNECT pid=33434 comm=curl daddr=172.31.210.12 dport=18080",
+        "May 11 22:37:43 lab-sdn-app-bulk-01 sdn-ebpf-agent[24614]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.12\",\"dst_port\":18080,\"flow_class\":\"bulk_to_api\",\"host\":\"lab-sdn-app-bulk-01\",\"sent\":true}",
+        "May 11 22:37:51 lab-sdn-app-bulk-01 sdn-ebpf-agent[24614]: TCP_CONNECT pid=33441 comm=curl daddr=10.60.10.11 dport=8090",
+        "May 11 22:37:52 lab-sdn-app-bulk-01 sdn-ebpf-agent[24614]: TCP_CONNECT pid=33457 comm=curl daddr=172.31.210.12 dport=18080",
+        "May 11 22:37:52 lab-sdn-app-bulk-01 sdn-ebpf-agent[24614]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.12\",\"dst_port\":18080,\"flow_class\":\"bulk_to_api\",\"host\":\"lab-sdn-app-bulk-01\",\"sent\":true}",
+        "May 11 22:37:52 lab-sdn-app-bulk-01 sdn-ebpf-agent[24614]: TCP_CONNECT pid=33458 comm=curl daddr=172.31.210.12 dport=18080",
+        "May 11 22:37:52 lab-sdn-app-bulk-01 sdn-ebpf-agent[24614]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.12\",\"dst_port\":18080,\"flow_class\":\"bulk_to_api\",\"host\":\"lab-sdn-app-bulk-01\",\"sent\":true}",
+        "May 11 22:37:53 lab-sdn-app-bulk-01 sdn-ebpf-agent[24614]: TCP_CONNECT pid=33459 comm=curl daddr=172.31.210.12 dport=18080",
+        "May 11 22:37:53 lab-sdn-app-bulk-01 sdn-ebpf-agent[24614]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.12\",\"dst_port\":18080,\"flow_class\":\"bulk_to_api\",\"host\":\"lab-sdn-app-bulk-01\",\"sent\":true}",
+        "May 11 22:37:53 lab-sdn-app-bulk-01 sdn-ebpf-agent[24614]: TCP_CONNECT pid=33460 comm=curl daddr=172.31.210.12 dport=18080",
+        "May 11 22:37:53 lab-sdn-app-bulk-01 sdn-ebpf-agent[24614]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.12\",\"dst_port\":18080,\"flow_class\":\"bulk_to_api\",\"host\":\"lab-sdn-app-bulk-01\",\"sent\":true}",
+        "May 11 22:37:54 lab-sdn-app-bulk-01 sdn-ebpf-agent[24614]: TCP_CONNECT pid=33461 comm=curl daddr=172.31.210.12 dport=18080",
+        "May 11 22:37:54 lab-sdn-app-bulk-01 sdn-ebpf-agent[24614]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.12\",\"dst_port\":18080,\"flow_class\":\"bulk_to_api\",\"host\":\"lab-sdn-app-bulk-01\",\"sent\":true}",
+        "May 11 22:38:31 lab-sdn-app-bulk-01 sdn-ebpf-agent[24614]: TCP_CONNECT pid=33510 comm=curl daddr=172.31.210.12 dport=18080",
+        "May 11 22:38:31 lab-sdn-app-bulk-01 sdn-ebpf-agent[24614]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.12\",\"dst_port\":18080,\"flow_class\":\"bulk_to_api\",\"host\":\"lab-sdn-app-bulk-01\",\"sent\":true}"
+    ]
+}
+ok: [lab-sdn-app-api-01] => {
+    "go_default_journal.stdout_lines": [
+        "May 11 22:34:35 lab-sdn-app-api-01 sdn-ebpf-agent[26228]: TCP_CONNECT pid=34949 comm=curl daddr=172.31.210.13 dport=15432",
+        "May 11 22:34:35 lab-sdn-app-api-01 sdn-ebpf-agent[26228]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.13\",\"dst_port\":15432,\"flow_class\":\"critical_api_to_db\",\"host\":\"lab-sdn-app-api-01\",\"sent\":true}",
+        "May 11 22:35:02 lab-sdn-app-api-01 sdn-ebpf-agent[26228]: TCP_CONNECT pid=34978 comm=curl daddr=172.31.210.13 dport=15432",
+        "May 11 22:35:02 lab-sdn-app-api-01 sdn-ebpf-agent[26228]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.13\",\"dst_port\":15432,\"flow_class\":\"critical_api_to_db\",\"host\":\"lab-sdn-app-api-01\",\"sent\":true}",
+        "May 11 22:35:02 lab-sdn-app-api-01 sdn-ebpf-agent[26228]: TCP_CONNECT pid=34979 comm=curl daddr=172.31.210.13 dport=15432",
+        "May 11 22:35:02 lab-sdn-app-api-01 sdn-ebpf-agent[26228]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.13\",\"dst_port\":15432,\"flow_class\":\"critical_api_to_db\",\"host\":\"lab-sdn-app-api-01\",\"sent\":true}",
+        "May 11 22:35:02 lab-sdn-app-api-01 sdn-ebpf-agent[26228]: TCP_CONNECT pid=34980 comm=curl daddr=172.31.210.13 dport=15432",
+        "May 11 22:35:02 lab-sdn-app-api-01 sdn-ebpf-agent[26228]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.13\",\"dst_port\":15432,\"flow_class\":\"critical_api_to_db\",\"host\":\"lab-sdn-app-api-01\",\"sent\":true}",
+        "May 11 22:35:02 lab-sdn-app-api-01 sdn-ebpf-agent[26228]: TCP_CONNECT pid=34981 comm=curl daddr=172.31.210.13 dport=15432",
+        "May 11 22:35:02 lab-sdn-app-api-01 sdn-ebpf-agent[26228]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.13\",\"dst_port\":15432,\"flow_class\":\"critical_api_to_db\",\"host\":\"lab-sdn-app-api-01\",\"sent\":true}",
+        "May 11 22:35:02 lab-sdn-app-api-01 sdn-ebpf-agent[26228]: TCP_CONNECT pid=34982 comm=curl daddr=172.31.210.13 dport=15432",
+        "May 11 22:35:02 lab-sdn-app-api-01 sdn-ebpf-agent[26228]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.13\",\"dst_port\":15432,\"flow_class\":\"critical_api_to_db\",\"host\":\"lab-sdn-app-api-01\",\"sent\":true}",
+        "May 11 22:36:02 lab-sdn-app-api-01 sdn-ebpf-agent[26228]: TCP_CONNECT pid=35043 comm=curl daddr=172.31.210.13 dport=15432",
+        "May 11 22:36:02 lab-sdn-app-api-01 sdn-ebpf-agent[26228]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.13\",\"dst_port\":15432,\"flow_class\":\"critical_api_to_db\",\"host\":\"lab-sdn-app-api-01\",\"sent\":true}",
+        "May 11 22:36:10 lab-sdn-app-api-01 sdn-ebpf-agent[26228]: TCP_CONNECT pid=35050 comm=curl daddr=10.60.10.11 dport=8090",
+        "May 11 22:36:36 lab-sdn-app-api-01 sdn-ebpf-agent[26228]: TCP_CONNECT pid=35066 comm=curl daddr=172.31.210.13 dport=15432",
+        "May 11 22:36:36 lab-sdn-app-api-01 sdn-ebpf-agent[26228]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.13\",\"dst_port\":15432,\"flow_class\":\"critical_api_to_db\",\"host\":\"lab-sdn-app-api-01\",\"sent\":true}",
+        "May 11 22:36:36 lab-sdn-app-api-01 sdn-ebpf-agent[26228]: TCP_CONNECT pid=35067 comm=curl daddr=172.31.210.13 dport=15432",
+        "May 11 22:36:36 lab-sdn-app-api-01 sdn-ebpf-agent[26228]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.13\",\"dst_port\":15432,\"flow_class\":\"critical_api_to_db\",\"host\":\"lab-sdn-app-api-01\",\"sent\":true}",
+        "May 11 22:36:36 lab-sdn-app-api-01 sdn-ebpf-agent[26228]: TCP_CONNECT pid=35068 comm=curl daddr=172.31.210.13 dport=15432",
+        "May 11 22:36:36 lab-sdn-app-api-01 sdn-ebpf-agent[26228]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.13\",\"dst_port\":15432,\"flow_class\":\"critical_api_to_db\",\"host\":\"lab-sdn-app-api-01\",\"sent\":true}",
+        "May 11 22:36:36 lab-sdn-app-api-01 sdn-ebpf-agent[26228]: TCP_CONNECT pid=35069 comm=curl daddr=172.31.210.13 dport=15432",
+        "May 11 22:36:36 lab-sdn-app-api-01 sdn-ebpf-agent[26228]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.13\",\"dst_port\":15432,\"flow_class\":\"critical_api_to_db\",\"host\":\"lab-sdn-app-api-01\",\"sent\":true}",
+        "May 11 22:36:36 lab-sdn-app-api-01 sdn-ebpf-agent[26228]: TCP_CONNECT pid=35070 comm=curl daddr=172.31.210.13 dport=15432",
+        "May 11 22:36:36 lab-sdn-app-api-01 sdn-ebpf-agent[26228]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.13\",\"dst_port\":15432,\"flow_class\":\"critical_api_to_db\",\"host\":\"lab-sdn-app-api-01\",\"sent\":true}",
+        "May 11 22:37:18 lab-sdn-app-api-01 sdn-ebpf-agent[26228]: TCP_CONNECT pid=35114 comm=curl daddr=172.31.210.13 dport=15432",
+        "May 11 22:37:18 lab-sdn-app-api-01 sdn-ebpf-agent[26228]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.13\",\"dst_port\":15432,\"flow_class\":\"critical_api_to_db\",\"host\":\"lab-sdn-app-api-01\",\"sent\":true}",
+        "May 11 22:37:26 lab-sdn-app-api-01 sdn-ebpf-agent[26228]: TCP_CONNECT pid=35121 comm=curl daddr=10.60.10.11 dport=8090",
+        "May 11 22:37:51 lab-sdn-app-api-01 sdn-ebpf-agent[26228]: TCP_CONNECT pid=35137 comm=curl daddr=172.31.210.13 dport=15432",
+        "May 11 22:37:51 lab-sdn-app-api-01 sdn-ebpf-agent[26228]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.13\",\"dst_port\":15432,\"flow_class\":\"critical_api_to_db\",\"host\":\"lab-sdn-app-api-01\",\"sent\":true}",
+        "May 11 22:37:51 lab-sdn-app-api-01 sdn-ebpf-agent[26228]: TCP_CONNECT pid=35138 comm=curl daddr=172.31.210.13 dport=15432",
+        "May 11 22:37:51 lab-sdn-app-api-01 sdn-ebpf-agent[26228]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.13\",\"dst_port\":15432,\"flow_class\":\"critical_api_to_db\",\"host\":\"lab-sdn-app-api-01\",\"sent\":true}",
+        "May 11 22:37:51 lab-sdn-app-api-01 sdn-ebpf-agent[26228]: TCP_CONNECT pid=35139 comm=curl daddr=172.31.210.13 dport=15432",
+        "May 11 22:37:51 lab-sdn-app-api-01 sdn-ebpf-agent[26228]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.13\",\"dst_port\":15432,\"flow_class\":\"critical_api_to_db\",\"host\":\"lab-sdn-app-api-01\",\"sent\":true}",
+        "May 11 22:37:51 lab-sdn-app-api-01 sdn-ebpf-agent[26228]: TCP_CONNECT pid=35140 comm=curl daddr=172.31.210.13 dport=15432",
+        "May 11 22:37:51 lab-sdn-app-api-01 sdn-ebpf-agent[26228]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.13\",\"dst_port\":15432,\"flow_class\":\"critical_api_to_db\",\"host\":\"lab-sdn-app-api-01\",\"sent\":true}",
+        "May 11 22:37:51 lab-sdn-app-api-01 sdn-ebpf-agent[26228]: TCP_CONNECT pid=35141 comm=curl daddr=172.31.210.13 dport=15432",
+        "May 11 22:37:51 lab-sdn-app-api-01 sdn-ebpf-agent[26228]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.13\",\"dst_port\":15432,\"flow_class\":\"critical_api_to_db\",\"host\":\"lab-sdn-app-api-01\",\"sent\":true}",
+        "May 11 22:38:31 lab-sdn-app-api-01 sdn-ebpf-agent[26228]: TCP_CONNECT pid=35198 comm=curl daddr=172.31.210.13 dport=15432",
+        "May 11 22:38:31 lab-sdn-app-api-01 sdn-ebpf-agent[26228]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.13\",\"dst_port\":15432,\"flow_class\":\"critical_api_to_db\",\"host\":\"lab-sdn-app-api-01\",\"sent\":true}"
+    ]
+}
+ok: [lab-sdn-data-db-01] => {
+    "go_default_journal.stdout_lines": [
+        "May 09 21:16:38 lab-sdn-data-db-01 systemd[1]: Started sdn-ebpf-agent.service - SDN Lab eBPF Agent.",
+        "May 09 21:16:38 lab-sdn-data-db-01 python3[24175]: SDN_EBPF_AGENT_START host=lab-sdn-data-db-01 segment=db collector=http://10.60.10.11:8090/ebpf/events config=/etc/sdn-ebpf-agent/config.json",
+        "May 09 21:16:38 lab-sdn-data-db-01 python3[24175]: Attaching 3 probes...",
+        "May 09 21:16:38 lab-sdn-data-db-01 python3[24175]: EBPF_TCP_V4_CONNECT_TRACE_START",
+        "May 09 21:16:52 lab-sdn-data-db-01 python3[24175]: TCP_CONNECT pid=24263 comm=curl daddr=172.31.210.12 dport=18080",
+        "May 09 21:16:52 lab-sdn-data-db-01 python3[24175]: SDN_EBPF_EVENT_SENT {\"config_version\": \"1\", \"dst_ip\": \"172.31.210.12\", \"dst_port\": 18080, \"flow_class\": \"db_to_api\", \"host\": \"lab-sdn-data-db-01\", \"sent\": true}",
+        "May 09 21:16:52 lab-sdn-data-db-01 python3[24175]: TCP_CONNECT pid=24175 comm=python3 daddr=10.60.10.11 dport=8090",
+        "May 09 21:33:29 lab-sdn-data-db-01 systemd[1]: Stopping sdn-ebpf-agent.service - SDN Lab eBPF Agent...",
+        "May 09 21:33:29 lab-sdn-data-db-01 systemd[1]: sdn-ebpf-agent.service: Deactivated successfully.",
+        "May 09 21:33:29 lab-sdn-data-db-01 systemd[1]: Stopped sdn-ebpf-agent.service - SDN Lab eBPF Agent.",
+        "May 09 21:33:38 lab-sdn-data-db-01 systemd[1]: Started sdn-ebpf-agent.service - SDN Lab eBPF Agent.",
+        "May 09 21:33:38 lab-sdn-data-db-01 python3[25697]: SDN_EBPF_AGENT_START host=lab-sdn-data-db-01 segment=db collector=http://10.60.10.11:8090/ebpf/events config=/etc/sdn-ebpf-agent/config.json",
+        "May 09 21:33:38 lab-sdn-data-db-01 python3[25697]: Attaching 3 probes...",
+        "May 09 21:33:38 lab-sdn-data-db-01 python3[25697]: EBPF_TCP_V4_CONNECT_TRACE_START",
+        "May 09 21:36:02 lab-sdn-data-db-01 systemd[1]: Stopping sdn-ebpf-agent.service - SDN Lab eBPF Agent - Go Stream Default...",
+        "May 09 21:36:02 lab-sdn-data-db-01 systemd[1]: sdn-ebpf-agent.service: Deactivated successfully.",
+        "May 09 21:36:02 lab-sdn-data-db-01 systemd[1]: Stopped sdn-ebpf-agent.service - SDN Lab eBPF Agent - Go Stream Default.",
+        "May 09 21:36:02 lab-sdn-data-db-01 systemd[1]: Started sdn-ebpf-agent.service - SDN Lab eBPF Agent - Go Stream Default.",
+        "May 09 21:36:02 lab-sdn-data-db-01 sdn-ebpf-agent[25986]: SDN_GO_EBPF_STREAM_AGENT_START host=lab-sdn-data-db-01 segment=db collector=http://10.60.10.11:8090/ebpf/events config=/etc/sdn-ebpf-agent/config.json",
+        "May 09 21:36:02 lab-sdn-data-db-01 sdn-ebpf-agent[25986]: Attaching 3 probes...",
+        "May 09 21:36:02 lab-sdn-data-db-01 sdn-ebpf-agent[25986]: EBPF_TCP_V4_CONNECT_TRACE_START",
+        "May 09 21:36:16 lab-sdn-data-db-01 sdn-ebpf-agent[25986]: TCP_CONNECT pid=26079 comm=curl daddr=172.31.210.12 dport=18080",
+        "May 09 21:36:16 lab-sdn-data-db-01 sdn-ebpf-agent[25986]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.12\",\"dst_port\":18080,\"flow_class\":\"db_to_api\",\"host\":\"lab-sdn-data-db-01\",\"sent\":true}",
+        "May 09 21:44:33 lab-sdn-data-db-01 sdn-ebpf-agent[25986]: TCP_CONNECT pid=27318 comm=curl daddr=216.239.32.21 dport=443",
+        "May 09 21:44:33 lab-sdn-data-db-01 sdn-ebpf-agent[25986]: TCP_CONNECT pid=27318 comm=curl daddr=172.217.18.174 dport=443",
+        "May 09 21:47:25 lab-sdn-data-db-01 systemd[1]: Stopping sdn-ebpf-agent.service - SDN Lab eBPF Agent - Go Stream Default...",
+        "May 09 21:47:25 lab-sdn-data-db-01 systemd[1]: sdn-ebpf-agent.service: Deactivated successfully.",
+        "May 09 21:47:25 lab-sdn-data-db-01 systemd[1]: Stopped sdn-ebpf-agent.service - SDN Lab eBPF Agent - Go Stream Default.",
+        "May 09 21:47:32 lab-sdn-data-db-01 systemd[1]: Started sdn-ebpf-agent.service - SDN Lab eBPF Agent - Go Stream Default.",
+        "May 09 21:47:32 lab-sdn-data-db-01 sdn-ebpf-agent[29324]: SDN_GO_EBPF_STREAM_AGENT_START host=lab-sdn-data-db-01 segment=db collector=http://10.60.10.11:8090/ebpf/events config=/etc/sdn-ebpf-agent/config.json",
+        "May 09 21:47:32 lab-sdn-data-db-01 sdn-ebpf-agent[29324]: Attaching 3 probes...",
+        "May 09 21:47:32 lab-sdn-data-db-01 sdn-ebpf-agent[29324]: EBPF_TCP_V4_CONNECT_TRACE_START",
+        "May 11 22:36:14 lab-sdn-data-db-01 sdn-ebpf-agent[29324]: TCP_CONNECT pid=40316 comm=curl daddr=172.31.210.12 dport=18080",
+        "May 11 22:36:14 lab-sdn-data-db-01 sdn-ebpf-agent[29324]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.12\",\"dst_port\":18080,\"flow_class\":\"db_to_api\",\"host\":\"lab-sdn-data-db-01\",\"sent\":true}",
+        "May 11 22:36:23 lab-sdn-data-db-01 sdn-ebpf-agent[29324]: TCP_CONNECT pid=40323 comm=curl daddr=10.60.10.11 dport=8090",
+        "May 11 22:37:30 lab-sdn-data-db-01 sdn-ebpf-agent[29324]: TCP_CONNECT pid=40377 comm=curl daddr=172.31.210.12 dport=18080",
+        "May 11 22:37:30 lab-sdn-data-db-01 sdn-ebpf-agent[29324]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.12\",\"dst_port\":18080,\"flow_class\":\"db_to_api\",\"host\":\"lab-sdn-data-db-01\",\"sent\":true}",
+        "May 11 22:37:38 lab-sdn-data-db-01 sdn-ebpf-agent[29324]: TCP_CONNECT pid=40384 comm=curl daddr=10.60.10.11 dport=8090",
+        "May 11 22:38:31 lab-sdn-data-db-01 sdn-ebpf-agent[29324]: TCP_CONNECT pid=40440 comm=curl daddr=172.31.210.12 dport=18080",
+        "May 11 22:38:31 lab-sdn-data-db-01 sdn-ebpf-agent[29324]: SDN_GO_EBPF_STREAM_EVENT_SENT {\"dst_ip\":\"172.31.210.12\",\"dst_port\":18080,\"flow_class\":\"db_to_api\",\"host\":\"lab-sdn-data-db-01\",\"sent\":true}"
+    ]
+}
+
+TASK [Read local agent state] **************************************************
+ok: [lab-sdn-data-db-01]
+ok: [lab-sdn-app-bulk-01]
+ok: [lab-sdn-app-api-01]
+ok: [lab-sdn-app-web-01]
+
+TASK [Parse local agent state] *************************************************
+ok: [lab-sdn-app-web-01]
+ok: [lab-sdn-app-bulk-01]
+ok: [lab-sdn-data-db-01]
+ok: [lab-sdn-app-api-01]
+
+TASK [Assert Go default local state] *******************************************
+ok: [lab-sdn-app-web-01] => {
+    "changed": false,
+    "msg": "GO_EBPF_DEFAULT_AGENT_LOCAL_STATE_PASS lab-sdn-app-web-01"
+}
+ok: [lab-sdn-data-db-01] => {
+    "changed": false,
+    "msg": "GO_EBPF_DEFAULT_AGENT_LOCAL_STATE_PASS lab-sdn-data-db-01"
+}
+ok: [lab-sdn-app-api-01] => {
+    "changed": false,
+    "msg": "GO_EBPF_DEFAULT_AGENT_LOCAL_STATE_PASS lab-sdn-app-api-01"
+}
+ok: [lab-sdn-app-bulk-01] => {
+    "changed": false,
+    "msg": "GO_EBPF_DEFAULT_AGENT_LOCAL_STATE_PASS lab-sdn-app-bulk-01"
+}
+
+PLAY [Verify Go default events in collector] ***********************************
+
+TASK [Read current eBPF events] ************************************************
+ok: [lab-sdn-ctrl-onos-01]
+
+TASK [Parse current events] ****************************************************
+ok: [lab-sdn-ctrl-onos-01]
+
+TASK [Extract event attributes] ************************************************
+ok: [lab-sdn-ctrl-onos-01]
+
+TASK [Show central Go default telemetry] ***************************************
+ok: [lab-sdn-ctrl-onos-01] => {
+    "msg": {
+        "count": "4",
+        "flow_classes": [
+            "web_to_api",
+            "db_to_api",
+            "critical_api_to_db",
+            "bulk_to_api"
+        ],
+        "sources": [
+            "sdn-ebpf-go-agent:default-v1:bpftrace:kprobe:tcp_v4_connect",
+            "sdn-ebpf-go-agent:default-v1:bpftrace:kprobe:tcp_v4_connect",
+            "sdn-ebpf-go-agent:default-v1:bpftrace:kprobe:tcp_v4_connect",
+            "sdn-ebpf-go-agent:default-v1:bpftrace:kprobe:tcp_v4_connect"
+        ]
+    }
+}
+
+TASK [Assert Go default telemetry in collector] ********************************
+ok: [lab-sdn-ctrl-onos-01] => {
+    "changed": false,
+    "msg": "GO_EBPF_DEFAULT_AGENT_COLLECTOR_PASS"
+}
+
+TASK [Verify agent health API sees Go default events] **************************
+ok: [lab-sdn-ctrl-onos-01]
+
+TASK [Parse agent health] ******************************************************
+ok: [lab-sdn-ctrl-onos-01]
+
+TASK [Assert agent health remains healthy] *************************************
+ok: [lab-sdn-ctrl-onos-01] => {
+    "changed": false,
+    "msg": "GO_EBPF_DEFAULT_AGENT_HEALTH_PASS"
+}
+
+TASK [Mark milestone 14F passed] ***********************************************
+ok: [lab-sdn-ctrl-onos-01] => {
+    "msg": "SDN_GO_EBPF_AGENT_DEFAULT_PROMOTION_PASS"
+}
+
+PLAY RECAP *********************************************************************
+lab-sdn-app-api-01         : ok=6    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+lab-sdn-app-bulk-01        : ok=6    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+lab-sdn-app-web-01         : ok=6    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+lab-sdn-ctrl-onos-01       : ok=10   changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+lab-sdn-data-db-01         : ok=6    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+

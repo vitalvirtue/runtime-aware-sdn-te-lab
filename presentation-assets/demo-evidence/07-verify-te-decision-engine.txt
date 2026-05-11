@@ -1,0 +1,59 @@
+
+PLAY [Verify TE decision engine baseline] **************************************
+
+TASK [Check TE metrics collector health] ***************************************
+ok: [lab-sdn-ctrl-onos-01]
+
+TASK [Check TE decision engine health] *****************************************
+ok: [lab-sdn-ctrl-onos-01]
+
+TASK [Evaluate TE decision] ****************************************************
+ok: [lab-sdn-ctrl-onos-01]
+
+TASK [Parse decision] **********************************************************
+ok: [lab-sdn-ctrl-onos-01]
+
+TASK [Show decision output] ****************************************************
+ok: [lab-sdn-ctrl-onos-01] => {
+    "decision_json": {
+        "decision": {
+            "action": "keep_current_paths",
+            "current_policy": {
+                "bulk_to_api": "path-2",
+                "critical_api_to_db": "path-1"
+            },
+            "mode": "dry-run",
+            "observed": {
+                "bulk_to_api_avg_seconds": 0.482676,
+                "critical_api_to_db_avg_seconds": 0.0015312,
+                "edge_a_bulk_packets": 251,
+                "edge_a_critical_packets": 252,
+                "edge_b_bulk_packets": 252,
+                "edge_b_critical_packets": 252
+            },
+            "reason": "Critical api->db latency is within target. Keep critical traffic on path-1 and bulk/default traffic on path-2.",
+            "thresholds": {
+                "critical_latency_target_seconds": 0.05,
+                "path_diff_margin_seconds": 0.1
+            },
+            "timestamp": "2026-05-11T22:35:05.886815Z"
+        },
+        "status": "ok"
+    }
+}
+
+TASK [Assert decision engine baseline] *****************************************
+ok: [lab-sdn-ctrl-onos-01] => {
+    "changed": false,
+    "msg": "TE_DECISION_ENGINE_BASELINE_PASS"
+}
+
+TASK [Assert current expected decision] ****************************************
+ok: [lab-sdn-ctrl-onos-01] => {
+    "changed": false,
+    "msg": "TE_DECISION_KEEP_CURRENT_PATHS_PASS"
+}
+
+PLAY RECAP *********************************************************************
+lab-sdn-ctrl-onos-01       : ok=7    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+
